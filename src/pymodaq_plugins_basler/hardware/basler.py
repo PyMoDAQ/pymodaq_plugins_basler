@@ -37,21 +37,14 @@ class BaslerCamera:
     tlFactory: pylon.TlFactory
     camera: pylon.InstantCamera
 
-    def __init__(self, name: str, callback: Optional[Callable] = None, **kwargs):
+    def __init__(self, info: str, callback: Optional[Callable] = None, **kwargs):
         super().__init__(**kwargs)
         # create camera object
         self.tlFactory = pylon.TlFactory.GetInstance()
         self.camera = pylon.InstantCamera()
         self.model_name = None
+        self.device_info = None
 
-        self.gain_value = None
-        self.gain_auto = None
-        self.exposure_time = None
-        self.exposure_auto = None
-        self.gamma_enable = None
-        self.gamma_value = None
-        self.frame_rate = None
-        self.gevscpd = None
 
         # register configuration event handler
         self.configurationEventHandler = ConfigurationHandler()
@@ -70,12 +63,12 @@ class BaslerCamera:
 
         self._pixel_length: Optional[float] = None
         self.attributes = {}
-        self.open(name=name)
+        self.open()
         if callback is not None:
             self.set_callback(callback=callback)
 
-    def open(self, name: str) -> None:
-        device = self.tlFactory.CreateDevice(name)
+    def open(self) -> None:
+        device = self.tlFactory.CreateDevice(self.model_name)
         self.camera.Attach(device)
         self.camera.Open()
         self.get_attributes()
@@ -170,28 +163,6 @@ class BaslerCamera:
         """Return width and height of detector in pixels."""
         return self.camera.SensorWidth.GetValue(), self.camera.SensorHeight.GetValue()
 
-    def wait_for_frame(
-        self, since="lastread", nframes=1, timeout=20.0, error_on_stopped=False
-    ):
-        """
-        Wait for one or several new camera frames.
-
-        `since` specifies the reference point for waiting to acquire `nframes` frames;
-        can be "lastread"`` (from the last read frame), ``"lastwait"`` (wait for the last successful
-          :meth:`wait_for_frame` call),
-        ``"now"`` (from the start of the current call), or ``"start"`` (from the acquisition start,
-        i.e., wait until `nframes` frames have been acquired).
-        `timeout` can be either a number, ``None`` (infinite timeout), or a tuple ``(timeout,
-        frame_timeout)``,
-        in which case the call times out if the total time exceeds ``timeout``, or a single frame
-        wait exceeds ``frame_timeout``.
-        If the call times out, raise ``TimeoutError``.
-        If ``error_on_stopped==True`` and the acquisition is not running, raise ``Error``;
-        otherwise, simply return ``False`` without waiting.
-        """
-        raise NotImplementedError("Not implemented")
-
-
     def get_attribute_value(self, name, error_on_missing=True):
         """Get the camera attribute with the given name"""
         return self.attributes[name]
@@ -252,26 +223,6 @@ class BaslerCamera:
             pylon.GrabStrategy_LatestImageOnly, pylon.GrabLoop_ProvidedByInstantCamera
         )
 
-    def stop_grabbing(self) -> None:
-        self.camera.StopGrabbing()
-
-    @property
-    def pixel_length(self) -> float:
-        """Get the pixel length of the camera in µm.
-
-        Returns None if the pixel length of the specific model is not known
-        """
-        if self._pixel_length is None:
-            try:
-                self._pixel_length = pixel_lengths[self.model_name]
-            except KeyError:
-                self._pixel_length = None
-        return self._pixel_length
-
-    @pixel_length.setter
-    def pixel_length(self, value):
-        self._pixel_length = value
-
 class ConfigurationHandler(pylon.ConfigurationEventHandler):
     """Handle the configuration events."""
 
@@ -325,6 +276,29 @@ class ImageEventHandler(pylon.ImageEventHandler):
                 )
             )
 
+
+class TemperatureMonitor(QtCore.QObject):
+    temperature_updated = QtCore.pyqtSignal(float)
+    finished = QtCore.pyqtSignal()
+
+    def __init__(self, camera_handle, check_interval=100):
+        super().__init__()
+        self._running = True
+        self.camera = camera_handle
+        self.interval = check_interval
+
+    def stop(self):
+        self._running = False
+
+    def run(self):
+        while self._running:
+            try:
+                temp = self.controller.camera.TemperatureAbs.Value
+                self.temperature_updated.emit(temp)
+            except Exception:
+                pass
+            QtCore.QThread.msleep(self.interval)
+        self.finished.emit()
 
 def detector_clamp(value: Union[float, int], max_value: int) -> int:
     """Clamp a value to possible detector position."""

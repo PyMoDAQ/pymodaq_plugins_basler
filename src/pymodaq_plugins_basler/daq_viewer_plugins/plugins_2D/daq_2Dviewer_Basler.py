@@ -9,9 +9,11 @@ from pymodaq.control_modules.viewer_utility_classes import main, DAQ_Viewer_base
 import warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning, module="numpy")
 
-from pymodaq_plugins_basler.hardware.basler import BaslerCamera
-from PyQt6.QtCore import pyqtSignal
+from pymodaq_plugins_basler.hardware.basler import BaslerCamera, TemperatureMonitor
 from qtpy import QtWidgets, QtCore
+
+if not hasattr(QtCore, "pyqtSignal"):
+    QtCore.pyqtSignal = QtCore.Signal  # type: ignore
 
 
 class DAQ_2DViewer_Basler(DAQ_Viewer_base):
@@ -21,7 +23,7 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
     live_mode_available = True
 
     # For Basler, this returns a list of user defined camera names
-    camera_list = [cam.GetUserDefinedName() for cam in BaslerCamera.list_cameras()]
+    camera_list = [cam.GetFriendlyName() for cam in BaslerCamera.list_cameras()]
 
     # Update the params
     params = comon_parameters + [
@@ -37,51 +39,29 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
             {'title': 'Binning', 'name': 'binning', 'type': 'list', 'limits': [1, 2], 'default': 1},
             {'title': 'Image Width', 'name': 'width', 'type': 'int', 'value': 1280, 'readonly': True},
             {'title': 'Image Height', 'name': 'height', 'type': 'int', 'value': 960, 'readonly': True},
-
-        ]},
-        {'title': 'Exposure', 'name': 'exposure', 'type': 'group', 'children': [
-            {'title': 'Auto Exposure', 'name': 'exposure_auto', 'type': 'led_push', 'value': 0, 'default': 0, 'limits': [0, 2]},
-            {'title': 'Exposure Time (us)', 'name': 'exposure_time', 'type': 'int', 'value': 100, 'default': 100, 'limits': [0, 1]}
-        ]},
-        {'title': 'Gain', 'name': 'gain', 'type': 'group', 'children': [
-            {'title': 'Auto Gain', 'name': 'gain_auto', 'type': 'led_push', 'value': 0, 'default': 0, 'limits': [0, 2]},
-            {'title': 'Value', 'name': 'gain_value', 'type': 'int', 'value': 1, 'default': 1, 'limits': [0, 1]}
-        ]},
-        {'title': 'Frame Rate', 'name': 'frame_rate', 'type': 'slide', 'value': 1.0, 'default': 1.0, 'limits': [0.0, 1.0]},
-        {'title': 'Gamma', 'name': 'gamma', 'type': 'group', 'children': [
-            {'title': 'Gamma Enable', 'name': 'gamma_enable', 'type': 'led_push', 'value': 0, 'default': 0, 'limits': [0, 1]},
-            {'title': 'Value', 'name': 'gamma_value', 'type': 'slide', 'value': 1.0, 'default': 1.0, 'limits': [0.0, 1.0]}
-        ]},
-        {'title': 'Inter-Packet Delay', 'name': 'gevscpd', 'type': 'int', 'value': 1, 'default': 1, 'limits': [0, 1]},
-        {'title': 'Device Temperature', 'name': 'temp', 'type': 'int', 'value': 1, 'readonly': True}
-    ]
-
-    callback_signal = pyqtSignal()
-    roi_info = None
+        ]}]
 
     def ini_attributes(self):
         """Initialize attributes"""
 
         self.controller: None
-        self.callback_thread = None
         self.user_id = None
 
-        self.x_axis = None
-        self.y_axis = None
-        self.axes = None
         self.data_shape = None
+        self.save_frame_local = False
+        self.save_frame_leco = False
+
+        # For LECO operation
+        self.metadata = None
 
     def init_controller(self) -> BaslerCamera:
-        # Define the camera controller.
-        # Use any argument necessary (serial_number, camera index, etc.) depending on the camera
-
-        # Init camera with currently selected user id name
+        # Init camera 
         self.user_id = self.settings.child('ID', 'camera_list').value()
         self.emit_status(ThreadCommand('Update_Status', [f"Trying to connect to {self.user_id}", 'log']))
         camera_list = BaslerCamera.list_cameras()
         for cam in camera_list:
             if cam.GetUserDefinedName() == self.user_id:
-                name = cam.GetFullName()
+                name = cam.GetDeviceInfo()
                 return BaslerCamera(name=name, callback=self.emit_data_callback)
         self.emit_status(ThreadCommand('Update_Status', ["Camera not found", 'log']))
         raise ValueError(f"Camera with name {self.user_id} not found anymore.")
@@ -185,6 +165,9 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
 
         self._prepare_view()
 
+        # Start thread for camera temp. monitoring
+        self.start_temperature_monitoring()
+
         info = "Initialized camera"
         initialized = True
         return info, initialized
@@ -200,7 +183,7 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
         if param.name() == "camera_list":
             if self.controller != None:
                 self.close()
-            self.ini_detector(controller=self.controller)
+            self.ini_detector()
         elif param.name() == "camera_user_id":
             try:
                 self.controller.camera.DeviceUserID.SetValue(param.value())
@@ -352,8 +335,6 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
             self._prepare_view()
 
     def grab_data(self, Naverage: int = 1, live: bool = False, **kwargs) -> None:
-        #if not self.controller.camera.IsGrabbing():
-        #    self.controller.camera.StartGrabbing()
         try:
             if live:
                 self._prepare_view()
@@ -423,39 +404,171 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
         self.roi_info = roi_info
     
     def crosshair(self, crosshair_info, ind_viewer=0):
-        sleep_ms = 100
-        ind = 0
+        sleep_ms = 150
+        self.crosshair_info = crosshair_info
+        QtCore.QTimer.singleShot(sleep_ms, QtWidgets.QApplication.processEvents)
 
-        while not self.controller.imageEventHandler.frame_ready:
-            QtCore.QThread.msleep(sleep_ms)
-            QtWidgets.QApplication.processEvents()
+    def start_temperature_monitoring(self):
+        self.temp_thread = QtCore.QThread()
+        self.temp_worker = TemperatureMonitor(self.controller.camera)
 
-            ind += 1
-            if ind * sleep_ms >= 1000:
-                self.emit_status(ThreadCommand('_raise_timeout'))
-                break
+        self.temp_worker.moveToThread(self.temp_thread)
 
-    # TODO Implement periodic temperature check
-    def check_temp(self):
-        try:
-            temp = self.controller.camera.TemperatureAbs.Value
-            self.settings.child('temp').setValue(temp)
-        except Exception:
-            pass
+        self.temp_thread.started.connect(self.temp_worker.run)
+        self.temp_worker.temperature_updated.connect(self.on_temperature_update)
+        self.temp_worker.finished.connect(self.temp_thread.quit)
+        self.temp_worker.finished.connect(self.temp_worker.deleteLater)
+        self.temp_thread.finished.connect(self.temp_thread.deleteLater)
+
+        self.temp_thread.start()
+
+    def on_temperature_update(self, temp: float):
+        param = self.settings.child('misc', 'SENSOR_TEMPERATURE')
+        param.setValue(temp)
+        param.sigValueChanged.emit(param, temp)
+        if temp > 60:
+            self.emit_status(ThreadCommand('Update_Status', [f"WARNING: {self.user_id} camera is too hot !!"]))
 
 
-class BaslerCallback(QtCore.QObject):
-    data_ready = pyqtSignal()  # Signal when data is ready
+    def add_attributes_to_settings(self):
+        existing_group_names = {child.name() for child in self.settings.children()}
 
-    def __init__(self, wait_fn):
-        super().__init__()
-        # Set the wait function
-        self.wait_fn = wait_fn
+        for attr in self.controller.attributes:
+            attr_name = attr['name']
+            if attr.get('type') == 'group':
+                if attr_name not in existing_group_names:
+                    self.settings.addChild(attr)
+                else:
+                    group_param = self.settings.child(attr_name)
 
-    def wait_for_acquisition(self):
-        new_data = self.wait_fn()
-        if new_data is not False:  # will be returned if the main thread called CancelWait
-            self.data_sig.emit()
+                    existing_children = {child.name(): child for child in group_param.children()}
+
+                    expected_children = attr.get('children', [])
+                    for expected in expected_children:
+                        expected_name = expected['name']
+                        if expected_name not in existing_children:
+                            for old_name, old_child in existing_children.items():
+                                if old_child.opts.get('title') == expected.get('title') and old_name != expected_name:
+                                    self.settings.child(attr_name, old_name).show(False)
+                                    break
+
+                            group_param.addChild(expected)
+            else:
+                if attr_name not in existing_group_names:
+                    self.settings.addChild(attr)
+        
+    
+    def update_params_ui(self):
+        device_map = self.controller.camera.device_property_map
+
+        # Common syntax for any camera model
+        self.settings.child('device_info','DeviceModelName').setValue(self.controller.model_name)
+        self.settings.child('device_info','DeviceSerialNumber').setValue(self.controller.device_info.serial)
+        self.settings.child('device_info','DeviceVersion').setValue(self.controller.device_info.version)
+        self.settings.child('device_state', 'device_state_to_load').setValue(self.controller.default_device_state_path)
+
+        # Special case
+        if 'DeviceUserID' in self.controller.attribute_names:
+            try:
+                device_user_id = device_map.get_value_str('DeviceUserID')
+                self.settings.child('device_info', 'DeviceUserID').setValue(device_user_id)
+                self.user_id = device_user_id
+            except Exception:
+                pass
+
+        for param in self.controller.attributes:
+            param_type = param['type']
+            param_name = param['name']
+            
+            # Already handled
+            if param_name == "device_info":
+                continue
+
+            if param_type == 'group':
+                # Recurse over children in groups
+                for child in param['children']:
+                    child_name = child['name']
+                    child_type = child['type']
+
+                    # Special case: skip these
+                    if child_name == 'TriggerSave':
+                        continue
+                    if child_name == 'TriggerSaveLocation':
+                        continue
+                    if child_name == 'TriggerSaveIndex':
+                        continue                    
+
+                    try:
+                        if child_type in ['float', 'slide']:
+                            value = device_map.get_value_float(child_name)
+                        elif child_type == 'int':
+                            value = device_map.get_value_int(child_name)
+                        elif child_type == 'led_push':
+                            value = device_map.get_value_bool(child_name)
+                        elif child_type == 'str':
+                            value = device_map.get_value_str(child_name)                            
+                        else:
+                            continue  # Unsupported type, skip
+
+                        # Special case: if parameter is ExposureTime, convert to ms from us
+                        if child_name == 'ExposureTimeRaw':
+                            value *= 1e-3
+
+                        # Set the value
+                        self.settings.child(param_name, child_name).setValue(value)
+
+                        # Set limits if defined
+                        if 'limits' in child and child_type in ['float', 'slide', 'int'] and not child.get('readonly', False):
+                            try:
+                                min_limit = device_map[child_name].minimum
+                                max_limit = device_map[child_name].maximum
+
+                                if child_name == 'ExposureTimeRaw':
+                                    min_limit *= 1e-3
+                                    max_limit *= 1e-3
+
+                                self.settings.child(param_name, child_name).setLimits([min_limit, max_limit])
+                            except Exception:
+                                pass
+
+                    except Exception:
+                        pass
+            else:
+
+                try:
+                    if param_type in ['float', 'slide']:
+                        value = device_map.get_value_float(param_name)
+                    elif param_type == 'int':
+                        value = device_map.get_value_int(param_name)
+                    elif param_type == 'led_push':
+                        value = device_map.get_value_bool(param_name)
+                    else:
+                        return  # Unsupported type, skip
+
+                    # Special case: if parameter is ExposureTime, convert to ms from us
+                    if param_name == 'ExposureTime':
+                        value *= 1e-3
+
+                    # Set the value
+                    self.settings.param(param_name).setValue(value)
+
+                    if 'limits' in param and param_type in ['float', 'slide', 'int'] and not param.get('readonly', False):
+                        try:
+                            min_limit = device_map[param_name].minimum
+                            max_limit = device_map[param_name].maximum
+
+                            if param_name == 'ExposureTime':
+                                min_limit *= 1e-3
+                                max_limit *= 1e-3
+
+                            self.settings.param(param_name).setLimits([min_limit, max_limit])
+
+                        except Exception:
+                            pass
+
+                except Exception:
+                    pass
+
 
 if __name__ == '__main__':
     main(__file__, init=False)
