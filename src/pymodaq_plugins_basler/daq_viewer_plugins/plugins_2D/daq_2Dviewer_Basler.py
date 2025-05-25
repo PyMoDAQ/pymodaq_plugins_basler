@@ -1,4 +1,7 @@
 import numpy as np
+import os
+import imageio as iio
+import h5py
 
 from pymodaq.utils.parameter import Parameter
 from pymodaq.utils.data import Axis, DataFromPlugins, DataToExport
@@ -23,16 +26,11 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
     live_mode_available = True
 
     # For Basler, this returns a list of user defined camera names
+
     camera_list = [cam.GetFriendlyName() for cam in BaslerCamera.list_cameras()]
 
     # Update the params
-    params = comon_parameters + [
-        {'title': 'Camera Identifiers', 'name': 'ID', 'type': 'group', 'children': [
-            {'title': 'Camera List:', 'name': 'camera_list', 'type': 'list', 'value': '', 'limits': camera_list},
-            {'title': 'Camera Model:', 'name': 'camera_model', 'type': 'str', 'value': '', 'readonly': True},
-            {'title': 'Camera Serial Number:', 'name': 'camera_serial', 'type': 'str', 'value': '', 'readonly': True},
-            {'title': 'Camera User ID:', 'name': 'camera_user_id', 'type': 'str', 'value': ''}
-        ]},
+    params = comon_parameters + [{'title': 'Camera List:', 'name': 'camera_list', 'type': 'list', 'value': '', 'limits': camera_list},
         {'title': 'ROI', 'name': 'roi', 'type': 'group', 'children': [
             {'title': 'Update ROI', 'name': 'update_roi', 'type': 'bool_push', 'value': False, 'default': False},
             {'title': 'Clear ROI+Bin', 'name': 'clear_roi', 'type': 'bool_push', 'value': False, 'default': False},
@@ -49,20 +47,20 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
 
         self.data_shape = None
         self.save_frame_local = False
-        self.save_frame_leco = False
+        self.frame_saved = False
 
         # For LECO operation
         self.metadata = None
+        self.save_frame_leco = False
 
     def init_controller(self) -> BaslerCamera:
         # Init camera 
-        self.user_id = self.settings.child('ID', 'camera_list').value()
+        self.user_id = self.settings.param('camera_list').value()
         self.emit_status(ThreadCommand('Update_Status', [f"Trying to connect to {self.user_id}", 'log']))
-        camera_list = BaslerCamera.list_cameras()
-        for cam in camera_list:
-            if cam.GetUserDefinedName() == self.user_id:
-                name = cam.GetDeviceInfo()
-                return BaslerCamera(name=name, callback=self.emit_data_callback)
+        device_info = BaslerCamera.list_cameras()
+        for devInfo in device_info:
+            if devInfo.GetFriendlyName() == self.user_id:
+                return BaslerCamera(info=devInfo, callback=self.emit_data_callback)
         self.emit_status(ThreadCommand('Update_Status', ["Camera not found", 'log']))
         raise ValueError(f"Camera with name {self.user_id} not found anymore.")
 
@@ -85,75 +83,16 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
         self.ini_detector_init(old_controller=controller,
                                new_controller=self.init_controller())
         
-        devInfo = self.controller.get_device_info()
-
-        self.settings.child('ID', 'camera_model').setValue(devInfo[1])
-        self.settings.child('ID', 'camera_serial').setValue(devInfo[2])
-        self.settings.child('ID', 'camera_user_id').setValue(self.user_id)
-
-        # Setup continuous acquisition & allow adjustable frame rate
-        self.controller.setup_acquisition()
-        self.controller.camera.AcquisitionFrameRateEnable = True
-
-        # Check if pixel length is known
-        if self.controller.pixel_length is None:
-            self.emit_status(ThreadCommand('Update_Status', [(f"No pixel length known for camera model '{self.controller.model_name}', defaulting to user-chosen one"), 'log']))
-            self.settings.child('pixel_length').show()
-
-        try:
-            param = getattr(self.controller.camera, self.controller.exposure_auto)
-            self.settings.child('exposure', 'exposure_auto').setValue(param.GetIntValue())
-        except Exception:
-            pass
-        try:
-            param = getattr(self.controller.camera, self.controller.exposure_time)
-            self.settings.child('exposure', 'exposure_time').setValue(param.GetValue())
-            self.settings.child('exposure', 'exposure_time').setDefault(param.GetValue())
-            self.settings.child('exposure', 'exposure_time').setLimits([param.GetMin(), param.GetMax()])
-        except Exception:
-            pass
-        try:
-            param = getattr(self.controller.camera, self.controller.gain_auto)
-            self.settings.child('gain', 'gain_auto').setValue(param.GetIntValue())
-        except Exception:
-            pass
-        try:
-            param = getattr(self.controller.camera, self.controller.gain_value)
-            self.settings.child('gain', 'gain_value').setValue(param.GetValue())
-            self.settings.child('gain', 'gain_value').setDefault(param.GetValue())
-            self.settings.child('gain', 'gain_value').setLimits([param.GetMin(), param.GetMax()])
-        except Exception:
-            pass
-        try:
-            param = getattr(self.controller.camera, self.controller.frame_rate)
-            self.settings.param('frame_rate').setValue(param.GetMax())
-            self.settings.param('frame_rate').setDefault(param.GetMax())
-            self.settings.param('frame_rate').setLimits([param.GetMin(), param.GetMax()])
-        except Exception:
-            pass
-        try:
-            param = getattr(self.controller.camera, self.controller.gamma_enable)
-            self.settings.child('gamma', 'gamma_enable').setValue(param.GetIntValue())
-        except Exception:
-            pass
-        try:
-            param = getattr(self.controller.camera, self.controller.gamma_value)
-            self.settings.child('gamma', 'gamma_value').setValue(param.GetValue())
-            self.settings.child('gamma', 'gamma_value').setDefault(param.GetValue())
-            self.settings.child('gamma', 'gamma_value').setLimits([param.GetMin(), param.GetMax()])
-        except Exception:
-            pass
-        try:
-            param = getattr(self.controller.camera, self.controller.gevscpd)
-            self.settings.param('gevscpd').setValue(self.controller.camera.GevSCPD.GetValue())
-            self.settings.param('gevscpd').setDefault(self.controller.camera.GevSCPD.GetValue())
-            self.settings.param('gevscpd').setLimits([self.controller.camera.GevSCPD.GetMin(), self.controller.camera.GevSCPD.GetMax()])
-        except Exception:
-            pass
-        try:
-            self.settings.param('temp').setValue(self.controller.camera.TemperatureAbs.GetValue())
-        except Exception:
-            pass
+        # Update the UI with available and current camera parameters
+        self.add_attributes_to_settings()
+        self.update_params_ui()
+        for param in self.settings.children():
+            if param.name() == 'device_info':
+                continue
+            param.sigValueChanged.emit(param, param.value())
+            if param.hasChildren():
+                for child in param.children():
+                    child.sigValueChanged.emit(child, child.value())
 
         # Update image parameters
         (x0, xend, y0, yend, xbin, ybin) = self.controller.get_roi()
@@ -163,12 +102,19 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
         self.settings.child('roi', 'width').setValue(width)
         self.settings.child('roi', 'height').setValue(height)
 
-        self._prepare_view()
+        # Connect camera lost event
+        self.controller.configurationEventHandler.signals.cameraRemoved.connect(self.camera_lost)
+
+        # Setup continuous acquisition & allow adjustable frame rate
+        self.controller.setup_acquisition()
 
         # Start thread for camera temp. monitoring
         self.start_temperature_monitoring()
 
+        self._prepare_view()
         info = "Initialized camera"
+        print(f"{self.user_id} camera initialized successfully")
+        self.emit_status(ThreadCommand('Update_Status', [f"{self.user_id} camera initialized successfully"]))
         initialized = True
         return info, initialized
 
@@ -180,24 +126,118 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
         param: Parameter
             A given parameter (within detector_settings) whose value has been changed by the user
         """
-        if param.name() == "camera_list":
+        name = param.name()
+        value = param.value()
+        try:
+            camera_attr = getattr(self.controller.camera, name)
+        except AttributeError:
+            pass
+
+        if name == "camera_list":
             if self.controller != None:
                 self.close()
             self.ini_detector()
-        elif param.name() == "camera_user_id":
-            try:
-                self.controller.camera.DeviceUserID.SetValue(param.value())
-                self.user_id = param.value()
-                camera_list = [cam.GetUserDefinedName() for cam in BaslerCamera.list_cameras()]
-                self.settings.child('ID', 'camera_list').setLimits(camera_list)
-            except Exception:
-                pass
-        elif param.name() == "update_roi":
-            if param.value():  # Switching on ROI
+
+        if name == "device_state_save":
+            self.controller.camera.device_save_state_to_file(self.controller.default_device_state_path)
+            param = self.settings.child('device_state', 'device_state_save')
+            param.setValue(False)
+            param.sigValueChanged.emit(param, False) 
+            return
+        if name == "device_state_load":
+            filepath = self.settings.child('device_state', 'device_state_to_load').value()
+            self.controller.stop_grabbing()
+            self.controller.load_device_state(filepath)
+            # Reinitialize what is needed
+            self.controller.setup_acquisition()
+            # Update the UI with available and current camera parameters
+            self.add_attributes_to_settings()
+            self.update_params_ui()
+            for param in self.settings.children():
+                param.sigValueChanged.emit(param, param.value())
+                if param.hasChildren():
+                    for child in param.children():
+                        child.sigValueChanged.emit(child, child.value())
+            self._prepare_view()
+            self.controller.start_grabbing(self.settings.param('AcquisitionFrameRateAbs').value())
+            self.emit_status(ThreadCommand('Update_Status', [f"Device state loaded from {filepath}"]))
+            return
+        if name == 'TriggerSave':
+            if not self.settings.child('trigger', 'TriggerMode').value():
+                print("Trigger mode is not active ! Start triggering first !")
+                self.emit_status(ThreadCommand('Update_Status', ["Trigger mode is not active ! Start triggering first !"]))
+                param = self.settings.child('trigger', 'TriggerSaveOptions', 'TriggerSave')
+                param.setValue(False) # Turn off save on trigger if triggering is off
+                param.sigValueChanged.emit(param, False) 
+                return
+            if value:
+                self.save_frame_local = True
+                return
+            else:
+                self.save_frame_local = False
+                return
+        if name == 'PixelFormat':
+            self.controller.stop_grabbing()
+            self.controller.camera.PixelFormat.SetValue(value)
+            self._prepare_view()
+            self.controller.start_grabbing(self.settings.param('AcquisitionFrameRateAbs').value())
+            return
+    
+        if name in self.controller.attribute_names:
+            # Special cases
+            if 'ExposureTime' in name:
+                value = int(value * 1e3)
+            if 'Gain' in name and 'Auto' not in name:
+                value = int(value)
+            if name == "DeviceUserID":
+                self.user_id = value
+                #TODO: Fix this so camera name change persists
+                #self.controller.camera.DeviceInfo.SetFriendlyName(value)
+                # Update the camera list to account for name change 
+                #camera_list = [cam.GetFriendlyName() for cam in BaslerCamera.list_cameras()]
+                #param = self.settings.param('camera_list')
+                #param.setLimits(camera_list)
+                #param.sigLimitsChanged.emit(param, camera_list)
+                return
+            if name == 'TriggerMode':
+                if value:
+                    camera_attr.SetIntValue(1)
+                else:
+                    camera_attr.SetIntValue(0)
+                    param = self.settings.child('trigger', 'TriggerSaveOptions', 'TriggerSave')
+                    param.setValue(False) # Turn off save on trigger if we turn off triggering
+                    param.sigValueChanged.emit(param, False)
+                    self.save_frame_local = False
+                return
+            if name == 'GainAuto':
+                if value:
+                    camera_attr.SetIntValue(1)
+                else:
+                    camera_attr.SetIntValue(0)
+                return
+            if name == 'ExposureAuto':
+                if value:
+                    camera_attr.SetIntValue(1)
+                else:
+                    camera_attr.SetIntValue(0)
+                return
+            # we only need to reference these, nothing to do with the cam
+            if name == 'TriggerSaveLocation':
+                return
+            if name == 'TriggerSaveIndex':
+                return
+            if name == 'Filetype':
+                return
+            if name == 'Prefix':
+                return
+            # All the rest, just do :
+            camera_attr.SetValue(value)
+
+        if name == "update_roi":
+            if value:  # Switching on ROI
 
                 # We handle ROI and binning separately for clarity
                 (old_x, _, old_y, _, xbin, ybin) = self.controller.get_roi()  # Get current binning
-
                 y0, x0 = self.roi_info.origin.coordinates
                 height, width = self.roi_info.size.coordinates
 
@@ -206,117 +246,68 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
                 new_y = (old_y + y0) * xbin
                 new_width = width * ybin
                 new_height = height * ybin
-
+                
                 new_roi = (new_x, new_width, xbin, new_y, new_height, ybin)
                 self.update_rois(new_roi)
                 param.setValue(False)
-        elif param.name() == 'binning':
+                param.sigValueChanged.emit(param, False)
+        elif name == 'binning':
             # We handle ROI and binning separately for clarity
             (x0, w, y0, h, *_) = self.controller.get_roi()  # Get current ROI
             xbin = self.settings.child('roi', 'binning').value()
             ybin = self.settings.child('roi', 'binning').value()
             new_roi = (x0, w, xbin, y0, h, ybin)
             self.update_rois(new_roi)
-        elif param.name() == "clear_roi":
-            if param.value():  # Switching on ROI
+        elif name == "clear_roi":
+            if value:  # Switching on ROI
                 wdet, hdet = self.controller.get_detector_size()
-                # self.settings.child('ROIselect', 'x0').setValue(0)
-                # self.settings.child('ROIselect', 'width').setValue(wdet)
                 self.settings.child('roi', 'binning').setValue(1)
-                #
-                # self.settings.child('ROIselect', 'y0').setValue(0)
-                # new_height = self.settings.child('ROIselect', 'height').setValue(hdet)
 
                 new_roi = (0, wdet, 1, 0, hdet, 1)
                 self.update_rois(new_roi)
                 param.setValue(False)
-        elif param.name() == "exposure_auto":
-            try:
-                par = getattr(self.controller.camera, self.controller.exposure_auto)
-                par.SetIntValue(param.value())
-            except Exception:
-                pass
-        elif param.name() == "exposure_time":
-            try:
-                par = getattr(self.controller.camera, self.controller.exposure_time)
-                par.SetValue(param.value())
-            except Exception:
-                pass
-        elif param.name() == "gain_auto":
-            try:
-                par = getattr(self.controller.camera, self.controller.gain_auto)
-                par.SetIntValue(param.value())
-            except Exception:
-                pass
-        elif param.name() == "gain_value":
-            try:
-                par = getattr(self.controller.camera, self.controller.gain_value)
-                par.SetValue(param.value())
-            except Exception:
-                pass
-        elif param.name() == "frame_rate":
-            try:
-                par = getattr(self.controller.camera, self.controller.frame_rate)
-                par.SetValue(param.value())
-            except Exception:
-                pass
-        elif param.name() == "gamma_enable":
-            try:
-                par = getattr(self.controller.camera, self.controller.gamma_enable)
-                par.SetIntValue(param.value())
-            except Exception:
-                pass
-        elif param.name() == "gamma_value":
-            try:
-                par = getattr(self.controller.camera, self.controller.gamma_value)
-                par.SetIntValue(param.value())
-            except Exception:
-                pass
-        elif param.name() == "gevscpd":
-            try:
-                par = getattr(self.controller.camera, self.controller.gevscpd)
-                par.SetIntValue(param.value())
-            except Exception:
-                pass
+                param.sigValueChanged.emit(param, False)
+
+        # for self.user_id use camera.SetFriendlyName()
 
     def _prepare_view(self):
-         """Preparing a data viewer by emitting temporary data. Typically, needs to be called whenever the
-         ROIs are changed"""
+        """Preparing a data viewer by emitting temporary data. Typically, needs to be called whenever the
+        ROIs are changed"""
  
-         (hstart, hend, vstart, vend, *binning) = self.controller.get_roi()
-         try:
-            xbin, ybin = binning
-         except ValueError:  # some Pylablib `get_roi` do return just four values instead of six
-            xbin = ybin = 1
-         height = hend - hstart
-         width = vend - vstart
+        (hstart, hend, vstart, vend, *binning) = self.controller.get_roi()
+        try:
+           xbin, ybin = binning
+        except ValueError:  # some Pylablib `get_roi` do return just four values instead of six
+           xbin = ybin = 1
+        height = hend - hstart
+        width = vend - vstart
  
-         self.settings.child('roi', 'width').setValue(width)
-         self.settings.child('roi', 'height').setValue(height)
- 
-         mock_data = np.zeros((width, height))
+        self.settings.child('roi', 'width').setValue(width)
+        self.settings.child('roi', 'height').setValue(height)
 
-         self.x_axis = Axis(label='Pixels', data=np.linspace(1, width, width), index=0)
- 
-         if width != 1 and height != 1:
-             data_shape = 'Data2D'
-             self.y_axis = Axis(label='Pixels', data=np.linspace(1, height, height), index=1)
-             self.axes = [self.x_axis, self.y_axis]
-         else:
-             data_shape = 'Data1D'
-             self.axes = [self.x_axis]
- 
-         if data_shape != self.data_shape:
-             self.data_shape = data_shape
-             self.dte_signal_temp.emit(
-                 DataToExport(f'{self.user_id}',
-                              data=[DataFromPlugins(name=f'{self.user_id}',
+        mock_data = np.zeros((height, width))
+
+        self.x_axis = Axis(label='Pixels', data=np.linspace(1, width, width), index=1)
+
+        if width != 1 and height != 1:
+            data_shape = 'Data2D'
+            self.y_axis = Axis(label='Pixels', data=np.linspace(1, height, height), index=0)
+            self.axes = [self.y_axis, self.x_axis]
+        else:
+            data_shape = 'Data1D'
+            self.axes = [self.x_axis]
+
+        if data_shape != self.data_shape:
+            self.data_shape = data_shape
+            self.dte_signal_temp.emit(
+                DataToExport(f'{self.user_id}',
+                            data=[DataFromPlugins(name=f'{self.user_id}',
                                                     data=[np.squeeze(mock_data)],
                                                     dim=self.data_shape,
                                                     labels=[f'{self.user_id}_{self.data_shape}'],
                                                     axes=self.axes)]))
- 
-             QtWidgets.QApplication.processEvents()
+
+            QtWidgets.QApplication.processEvents()
 
     def update_rois(self, new_roi):
         (new_x, new_width, new_xbinning, new_y, new_height, new_ybinning) = new_roi
@@ -336,48 +327,80 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
 
     def grab_data(self, Naverage: int = 1, live: bool = False, **kwargs) -> None:
         try:
+            self._prepare_view()
             if live:
-                self._prepare_view()
-                self.controller.start_grabbing(frame_rate=self.settings.param('frame_rate').value())
+                self.controller.start_grabbing(self.settings.param('AcquisitionFrameRateAbs').value())
             else:
-                self._prepare_view()
-                self.emit_data()
+                self.controller.start_grabbing(self.settings.param('AcquisitionFrameRateAbs').value())
+                while not self.controller.imageEventHandler.frame_ready:
+                    pass
+                self.controller.stop_grabbing()
         except Exception as e:
             self.emit_status(ThreadCommand('Update_Status', [str(e), "log"]))
 
-    def emit_data(self):
-        """
-            Function used to emit data obtained by callback.
-            See Also
-            --------
-            daq_utils.ThreadCommand
-        """
-        try:
-            # Get data from buffer
-            frame = self.controller.read_newest_image()
-            # Emit the frame.
-            if frame is not None:
-                self.dte_signal.emit(
-                    DataToExport(f'{self.user_id}', data=[DataFromPlugins(
-                        name=f'{self.user_id}',
-                        data=[np.squeeze(frame)],
-                        dim=self.data_shape,
-                        labels=[f'{self.user_id}_{self.data_shape}'],
-                        axes=self.axes)]))
-
-            QtWidgets.QApplication.processEvents()
-
-        except Exception as e:
-            self.emit_status(ThreadCommand('Update_Status', [str(e), 'log']))
 
     def emit_data_callback(self, frame) -> None:
-        self.dte_signal.emit(
-            DataToExport(f'{self.user_id}', data=[DataFromPlugins(
+        if not self.save_frame_local and not self.save_frame_leco:
+            dte = DataToExport(f'{self.user_id}', data=[DataFromPlugins(
                 name=f'{self.user_id}',
                 data=[np.squeeze(frame)],
                 dim=self.data_shape,
                 labels=[f'{self.user_id}_{self.data_shape}'],
-                axes=self.axes)]))
+                axes=self.axes)])
+        elif self.save_frame_local and not self.save_frame_leco:
+            self.frame_saved = False
+            dte = DataToExport(f'{self.user_id}', data=[DataFromPlugins(
+                name=f'{self.user_id}',
+                data=[np.squeeze(frame)],
+                dim=self.data_shape,
+                labels=[f'{self.user_id}_{self.data_shape}'],
+                do_save=True,
+                axes=self.axes)])
+            index = self.settings.child('trigger', 'TriggerSaveOptions', 'TriggerSaveIndex')
+            filepath = self.settings.child('trigger', 'TriggerSaveOptions', 'TriggerSaveLocation').value()
+            prefix = self.settings.child('trigger', 'TriggerSaveOptions', 'Prefix').value()
+            filetype = self.settings.child('trigger', 'TriggerSaveOptions', 'Filetype').value()
+            ulid = None
+            if filetype == 'h5':
+                if self.metadata is not None:
+                    filepath = self.metadata['filepath']
+                    filename = self.metadata['filename']
+                    ulid = self.metadata['ulid']
+                    with h5py.File(os.path.join(filepath, filename), 'w') as f:
+                        f.create_dataset(filename, data=frame)
+                        f.attrs['ulid'] = ulid
+                        f.attrs['user_id'] = self.user_id
+                    self.metadata = None
+            else:
+                if not filepath:
+                    filepath = os.path.join(os.path.expanduser('~'), 'Downloads', f"{prefix}{index.value()}.{filetype}")
+                else:
+                    filepath = os.path.join(filepath, f"{prefix}{index.value()}.{filetype}")
+                iio.imwrite(filepath, frame)
+                index.setValue(index.value()+1)
+                index.sigValueChanged.emit(index, index.value())
+            self.frame_saved = True
+        elif self.save_frame_leco:
+            self.frame_saved = False
+            dte = DataToExport(f'{self.user_id}', data=[DataFromPlugins(
+                name=f'{self.user_id}',
+                data=[np.squeeze(frame)],
+                dim=self.data_shape,
+                labels=[f'{self.user_id}_{self.data_shape}'],
+                do_save=True,
+                axes=self.axes)])
+            if self.metadata is not None:
+                filepath = self.metadata['filepath']
+                filename = self.metadata['filename']
+                ulid = self.metadata['ulid']
+                with h5py.File(os.path.join(filepath, filename), 'w') as f:
+                    f.create_dataset(filename, data=frame)
+                    f.attrs['ulid'] = ulid
+                    f.attrs['user_id'] = self.user_id
+                self.frame_saved = True
+                self.metadata = None
+        self.dte_signal.emit(dte)
+        self.controller.imageEventHandler.frame_ready = False
 
     def stop(self):
         self.controller.camera.StopGrabbing()
@@ -385,20 +408,21 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
     
     def close(self):
         """Terminate the communication protocol"""
-        if self.controller.camera.IsGrabbing():
-            self.controller.camera.StopGrabbing()
+        self.controller.attributes = None
         self.controller.close()
+            
+        # Stop any background threads
+        if hasattr(self, 'temp_worker'):
+            self.temp_worker.stop()
+        if hasattr(self, 'temp_thread'):
+            self.temp_thread.quit()
+            self.temp_thread.wait()
 
-        if self.callback_thread is not None:
-            self.callback_thread.quit()
-            self.callback_thread.wait()
-            self.callback_thread = None
-
-        self.controller = None  # Garbage collect the controller
         self.status.initialized = False
         self.status.controller = None
-        self.status.info = ""           
-        print(f"{self.user_id} communication terminated successfully")   
+        self.status.info = ""
+        print(f"{self.user_id} communication terminated successfully")
+        self.emit_status(ThreadCommand('Update_Status', [f"{self.user_id} communication terminated successfully"]))
     
     def roi_select(self, roi_info, ind_viewer):
         self.roi_info = roi_info
@@ -407,6 +431,11 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
         sleep_ms = 150
         self.crosshair_info = crosshair_info
         QtCore.QTimer.singleShot(sleep_ms, QtWidgets.QApplication.processEvents)
+
+    def camera_lost(self):
+        self.close()
+        print(f"Lost connection to {self.user_id}")
+        self.emit_status(ThreadCommand('Update_Status', [f"Lost connection to {self.user_id}"]))
 
     def start_temperature_monitoring(self):
         self.temp_thread = QtCore.QThread()
@@ -423,7 +452,7 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
         self.temp_thread.start()
 
     def on_temperature_update(self, temp: float):
-        param = self.settings.child('misc', 'SENSOR_TEMPERATURE')
+        param = self.settings.child('misc', 'TemperatureAbs')
         param.setValue(temp)
         param.sigValueChanged.emit(param, temp)
         if temp > 60:
@@ -459,22 +488,13 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
         
     
     def update_params_ui(self):
-        device_map = self.controller.camera.device_property_map
 
         # Common syntax for any camera model
-        self.settings.child('device_info','DeviceModelName').setValue(self.controller.model_name)
-        self.settings.child('device_info','DeviceSerialNumber').setValue(self.controller.device_info.serial)
-        self.settings.child('device_info','DeviceVersion').setValue(self.controller.device_info.version)
-        self.settings.child('device_state', 'device_state_to_load').setValue(self.controller.default_device_state_path)
+        param = self.settings.child('device_info','DeviceModelName').setValue(self.controller.model_name)
+        self.settings.child('device_info','DeviceSerialNumber').setValue(self.controller.device_info.GetSerialNumber())
+        self.settings.child('device_info','DeviceVersion').setValue(self.controller.device_info.GetDeviceVersion())
+        self.settings.child('device_info','DeviceUserID').setValue(self.controller.device_info.GetFriendlyName())
 
-        # Special case
-        if 'DeviceUserID' in self.controller.attribute_names:
-            try:
-                device_user_id = device_map.get_value_str('DeviceUserID')
-                self.settings.child('device_info', 'DeviceUserID').setValue(device_user_id)
-                self.user_id = device_user_id
-            except Exception:
-                pass
 
         for param in self.controller.attributes:
             param_type = param['type']
@@ -483,35 +503,34 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
             # Already handled
             if param_name == "device_info":
                 continue
+            if param_name == "device_state":
+                continue
 
             if param_type == 'group':
                 # Recurse over children in groups
                 for child in param['children']:
                     child_name = child['name']
                     child_type = child['type']
-
                     # Special case: skip these
-                    if child_name == 'TriggerSave':
+                    if child_name == 'TriggerSaveOptions':
                         continue
-                    if child_name == 'TriggerSaveLocation':
+                    if child_name == 'TemperatureAbs':
                         continue
-                    if child_name == 'TriggerSaveIndex':
-                        continue                    
+                    camera_attr = getattr(self.controller.camera, child_name)
 
                     try:
-                        if child_type in ['float', 'slide']:
-                            value = device_map.get_value_float(child_name)
-                        elif child_type == 'int':
-                            value = device_map.get_value_int(child_name)
+                        if child_type in ['float', 'slide', 'int', 'str']:
+                            value = camera_attr.GetValue()
                         elif child_type == 'led_push':
-                            value = device_map.get_value_bool(child_name)
-                        elif child_type == 'str':
-                            value = device_map.get_value_str(child_name)                            
+                            if child_name != 'GammaEnable':
+                                value = bool(camera_attr.GetIntValue())
+                            else:
+                                value = camera_attr.GetValue()
                         else:
                             continue  # Unsupported type, skip
 
-                        # Special case: if parameter is ExposureTime, convert to ms from us
-                        if child_name == 'ExposureTimeRaw':
+                        # Special case: if parameter is related to ExposureTime, convert to ms from us
+                        if 'ExposureTime' in child_name:
                             value *= 1e-3
 
                         # Set the value
@@ -520,10 +539,10 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
                         # Set limits if defined
                         if 'limits' in child and child_type in ['float', 'slide', 'int'] and not child.get('readonly', False):
                             try:
-                                min_limit = device_map[child_name].minimum
-                                max_limit = device_map[child_name].maximum
+                                min_limit = camera_attr.GetMin()
+                                max_limit = camera_attr.GetMax()
 
-                                if child_name == 'ExposureTimeRaw':
+                                if 'ExposureTime' in child_name:
                                     min_limit *= 1e-3
                                     max_limit *= 1e-3
 
@@ -534,19 +553,20 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
                     except Exception:
                         pass
             else:
-
+                camera_attr = getattr(self.controller.camera, param_name)
                 try:
-                    if param_type in ['float', 'slide']:
-                        value = device_map.get_value_float(param_name)
-                    elif param_type == 'int':
-                        value = device_map.get_value_int(param_name)
+                    if param_type in ['float', 'slide', 'int', 'str']:
+                        value = camera_attr.GetValue()
                     elif param_type == 'led_push':
-                        value = device_map.get_value_bool(param_name)
+                        if param_name != 'GammaEnable':
+                            value = bool(camera_attr.GetIntValue())
+                        else:
+                            value = camera_attr.GetValue()
                     else:
-                        return  # Unsupported type, skip
+                        continue  # Unsupported type, skip
 
-                    # Special case: if parameter is ExposureTime, convert to ms from us
-                    if param_name == 'ExposureTime':
+                    # Special case: if parameter is related to ExposureTime, convert to ms from us
+                    if 'ExposureTime' in param_name:
                         value *= 1e-3
 
                     # Set the value
@@ -554,8 +574,9 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
 
                     if 'limits' in param and param_type in ['float', 'slide', 'int'] and not param.get('readonly', False):
                         try:
-                            min_limit = device_map[param_name].minimum
-                            max_limit = device_map[param_name].maximum
+                            min_limit = camera_attr.GetMin()
+                            max_limit = camera_attr.GetMax()
+
 
                             if param_name == 'ExposureTime':
                                 min_limit *= 1e-3

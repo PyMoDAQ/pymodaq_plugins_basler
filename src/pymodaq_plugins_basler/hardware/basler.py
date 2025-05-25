@@ -1,5 +1,6 @@
 import logging
 from typing import Any, Callable, List, Optional, Tuple, Union
+import platform
 
 from numpy.typing import NDArray
 from pypylon import pylon
@@ -12,17 +13,6 @@ if not hasattr(QtCore, "pyqtSignal"):
 
 log = logging.getLogger(__name__)
 log.addHandler(logging.NullHandler())
-
-
-pixel_lengths: dict[str, float] = {
-    # camera model name: pixel length in µm
-    "daA1280-54um": 3.75,
-    "daA2500-14um": 2.2,
-    "daA3840-45um": 2,
-    "acA640-120gm": 5.6,
-    "acA645-100gm": 5.6,
-    "acA1920-40gm": 5.86,
-}
 
 
 class BaslerCamera:
@@ -42,9 +32,18 @@ class BaslerCamera:
         # create camera object
         self.tlFactory = pylon.TlFactory.GetInstance()
         self.camera = pylon.InstantCamera()
-        self.model_name = None
-        self.device_info = None
+        self.model_name = info.GetModelName()
+        self.device_info = info
 
+        # Default place to look for saved device configuration
+        if platform.system() == 'Windows':
+            self.default_device_state_path = os.path.join(
+                os.environ.get('PROGRAMDATA'), '.pymodaq', f'{self.model_name}_config.pfs'
+            )
+        else:
+            self.default_device_state_path = os.path.join(
+                '/etc', '.pymodaq', f'{self.model_name}_config.pfs'
+            )
 
         # register configuration event handler
         self.configurationEventHandler = ConfigurationHandler()
@@ -61,17 +60,17 @@ class BaslerCamera:
 
         self.imageEventHandler.signals.imageGrabbed.connect(lambda x: print("Image grabbed"))
 
-        self._pixel_length: Optional[float] = None
         self.attributes = {}
         self.open()
         if callback is not None:
             self.set_callback(callback=callback)
 
     def open(self) -> None:
-        device = self.tlFactory.CreateDevice(self.model_name)
+        device = self.tlFactory.CreateDevice(self.device_info.GetFullName())
         self.camera.Attach(device)
         self.camera.Open()
         self.get_attributes()
+        self.attribute_names = [attr['name'] for attr in self.attributes] + [child['name'] for attr in self.attributes if attr.get('type') == 'group' for child in attr.get('children', [])]
 
     def set_callback(
         self, callback: Callable[[NDArray], None], replace_all: bool = True
@@ -94,41 +93,22 @@ class BaslerCamera:
         """List all available cameras as camera info objects."""
         tlFactory = pylon.TlFactory.GetInstance()
         return tlFactory.EnumerateDevices()
-
-    def get_device_info(self) -> List[Any]:
-        """Get camera information.
-
-        Return tuple ``(name, model, serial, devclass, devversion, vendor, friendly_name, user_name,
-        props)``.
-        """
-        devInfo: pylon.DeviceInfo = self.camera.GetDeviceInfo()
-        return [
-            devInfo.GetFullName(),
-            devInfo.GetModelName(),
-            devInfo.GetSerialNumber(),
-            devInfo.GetDeviceClass(),
-            devInfo.GetDeviceVersion(),
-            devInfo.GetVendorName(),
-            devInfo.GetFriendlyName(),
-            devInfo.GetUserDefinedName(),
-            None,
-        ]
     
+
     def get_attributes(self):
-        devInfo = self.camera.GetDeviceInfo()
-        self.model_name = devInfo.GetModelName()
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        file_path = os.path.join(script_dir, f'config_{self.model_name}.json')
+        """Get the attributes of the camera and store them in a dictionary."""
+        name = self.model_name.replace(" ", "-")
+
+        if platform.system() == 'Windows':
+            base_dir = os.path.join(os.environ.get('PROGRAMDATA'), '.pymodaq')
+        else:
+            base_dir = '/etc/.pymodaq'
+
+        file_path = os.path.join(base_dir, f'config_{name}.json')
+
         with open(file_path, 'r') as file:
-            self.attributes = json.load(file)
-            self.gain_value = self.attributes["Gain"]["name"]
-            self.exposure_time = self.attributes["Exposure Time"]["name"]
-            self.exposure_auto = self.attributes["Exposure Auto"]["name"]
-            self.gain_auto = self.attributes["Gain Auto"]["name"]
-            self.gamma_enable = self.attributes["Gamma Enable"]["name"]
-            self.gamma_value = self.attributes["Gamma"]["name"]
-            self.frame_rate = self.attributes["Acquisition Frame Rate"]["name"]
-            self.gevscpd = self.attributes["GevSCPD"]["name"]
+            attributes = json.load(file)
+            self.attributes = self.clean_device_attributes(attributes)
 
 
     def get_roi(self) -> Tuple[float, float, float, float, int, int]:
@@ -167,10 +147,6 @@ class BaslerCamera:
         """Get the camera attribute with the given name"""
         return self.attributes[name]
 
-    def clear_acquisition(self):
-        """Stop acquisition"""
-        pass  # TODO
-
     def setup_acquisition(self):
         self.camera.TriggerSelector.SetValue("AcquisitionStart")
         self.camera.TriggerMode.SetValue("Off")
@@ -178,37 +154,11 @@ class BaslerCamera:
         self.camera.TriggerMode.SetValue("Off")
         self.camera.AcquisitionFrameRateEnable.SetValue(False)
         self.camera.AcquisitionMode.SetValue("Continuous")
-
-    def acquisition_in_progress(self):
-        raise NotImplementedError("Not implemented")
-
-    def read_newest_image(self):
-        return self.get_one()
+        self.camera.AcquisitionFrameRateEnable.SetValue(True)
 
     def close(self) -> None:
         self.camera.Close()
         self.camera.DetachDevice()
-        self._pixel_length = None
-
-    # additional methods, for use in the code
-    def get_single_result(self, timeout_ms: int = 1000) -> pylon.GrabResult:
-        """Get one image and return the pylon `GrabResult`."""
-        args = []
-        if timeout_ms is not None:
-            args.append(timeout_ms)
-        if args:
-            result: pylon.GrabResult = self.camera.GrabOne(*args)
-        else:
-            result = self.camera.GrabOne()
-        if result.GrabSucceeded():
-            return result
-        else:
-            raise TimeoutError("Grabbing exceeded timeout")
-
-    def get_one(self, timeout_ms: int = 1000):
-        """Get one image and return the (numpy) array of it."""
-        result = self.get_single_result(timeout_ms=1000)
-        result.GetArray()
 
     def start_grabbing(self, frame_rate: int) -> None:
         """Start continuously to grab data.
@@ -222,6 +172,65 @@ class BaslerCamera:
         self.camera.StartGrabbing(
             pylon.GrabStrategy_LatestImageOnly, pylon.GrabLoop_ProvidedByInstantCamera
         )
+
+    def stop_grabbing(self):
+        self.camera.StopGrabbing()
+        return ''
+
+    def save_device_state(self):
+        save_path = self.default_device_state_path
+        node_map = self.camera.GetNodeMap()
+        try:
+            pylon.FeaturePersistence.Save(save_path, node_map)
+            print(f"Device state saved to {save_path}")
+        except Exception as e:
+            print(f"Failed to save device state: {e}")
+
+    def load_device_state(self, load_path):
+        node_map = self.camera.GetNodeMap()
+        if os.path.isfile(load_path):
+            try:
+                pylon.FeaturePersistence.Load(load_path, node_map)
+                print(f"Device state loaded from {load_path}")
+            except Exception as e:
+                print(f"Failed to load device state: {e}")
+        else:
+            print("No saved settings file found to load.")
+
+    
+    def clean_device_attributes(self, attributes):
+        clean_params = []
+
+        # Check if attributes is a list or dictionary
+        if isinstance(attributes, dict):
+            items = attributes.items()
+        elif isinstance(attributes, list):
+            # If it's a list, we assume each item is a parameter (no keys)
+            items = enumerate(attributes)  # Use index for 'key'
+        else:
+            raise ValueError(f"Unsupported type for attributes: {type(attributes)}")
+
+        for idx, attr in items:
+            param = {}
+
+            param['title'] = attr.get('title', '')
+            param['name'] = attr.get('name', str(idx))  # use index if name is missing
+            param['type'] = attr.get('type', 'str')
+            param['value'] = attr.get('value', '')
+            param['default'] = attr.get('default', None)
+            param['limits'] = attr.get('limits', None)
+            param['readonly'] = attr.get('readonly', False)
+
+            if param['type'] == 'group' and 'children' in attr:
+                children = attr['children']
+                # If children is a dict, convert to a list
+                if isinstance(children, dict):
+                    children = list(children.values())
+                param['children'] = self.clean_device_attributes(children)
+
+            clean_params.append(param)
+
+        return clean_params
 
 class ConfigurationHandler(pylon.ConfigurationEventHandler):
     """Handle the configuration events."""
@@ -293,7 +302,7 @@ class TemperatureMonitor(QtCore.QObject):
     def run(self):
         while self._running:
             try:
-                temp = self.controller.camera.TemperatureAbs.Value
+                temp = self.camera.TemperatureAbs.Value
                 self.temperature_updated.emit(temp)
             except Exception:
                 pass
