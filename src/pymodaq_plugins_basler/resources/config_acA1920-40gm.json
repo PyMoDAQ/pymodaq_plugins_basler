@@ -65,7 +65,7 @@
             "Pixel Format": {"title": "Pixel Format", "name": "PixelFormat", "type": "list", "value": "Mono12", "limits": ["Mono8", "Mono12"]},
             "GammaEnable": {"title": "Gamma Enable", "name": "GammaEnable", "type": "led_push", "value": false},
             "Gamma": {"title": "Gamma", "name": "Gamma", "type": "slide", "value": 1.0, "default": 1.0, "limits": [0.0, 2.0]},
-            "Gev SCPS Packet Size": {"title": "Gev SCPS Packet Size", "name": "GevSCPSPacketSize", "type": "int", "value": 3000, "limits": [0, 6000]},
+            "Gev SCPS Packet Size": {"title": "Gev SCPS Packet Size", "name": "GevSCPSPacketSize", "type": "int", "value": 3000, "default": 3000, "limits": [0, 6000]},
             "TemperatureAbs": {"title": "Sensor Temp. (C)", "name": "TemperatureAbs", "type": "float", "value": 1.0, "readonly": true}
         }
     },

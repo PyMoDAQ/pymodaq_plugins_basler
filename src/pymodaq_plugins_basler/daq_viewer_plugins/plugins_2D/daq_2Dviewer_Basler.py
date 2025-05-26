@@ -2,6 +2,7 @@ import numpy as np
 import os
 import imageio as iio
 import h5py
+from ulid import ULID
 
 from pymodaq.utils.parameter import Parameter
 from pymodaq.utils.data import Axis, DataFromPlugins, DataToExport
@@ -128,10 +129,6 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
         """
         name = param.name()
         value = param.value()
-        try:
-            camera_attr = getattr(self.controller.camera, name)
-        except AttributeError:
-            pass
 
         if name == "camera_list":
             if self.controller != None:
@@ -162,6 +159,12 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
             self.controller.start_grabbing(self.settings.param('AcquisitionFrameRateAbs').value())
             self.emit_status(ThreadCommand('Update_Status', [f"Device state loaded from {filepath}"]))
             return
+        if name == 'PixelFormat':
+            self.controller.stop_grabbing()
+            self.controller.camera.PixelFormat.SetValue(value)
+            self._prepare_view()
+            self.controller.start_grabbing(self.settings.param('AcquisitionFrameRateAbs').value())
+            return
         if name == 'TriggerSave':
             if not self.settings.child('trigger', 'TriggerMode').value():
                 print("Trigger mode is not active ! Start triggering first !")
@@ -176,12 +179,6 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
             else:
                 self.save_frame_local = False
                 return
-        if name == 'PixelFormat':
-            self.controller.stop_grabbing()
-            self.controller.camera.PixelFormat.SetValue(value)
-            self._prepare_view()
-            self.controller.start_grabbing(self.settings.param('AcquisitionFrameRateAbs').value())
-            return
     
         if name in self.controller.attribute_names:
             # Special cases
@@ -191,15 +188,15 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
                 value = int(value)
             if name == "DeviceUserID":
                 self.user_id = value
-                #TODO: Fix this so camera name change persists
-                #self.controller.camera.DeviceInfo.SetFriendlyName(value)
+                self.controller.camera.DeviceUserID.SetValue(value)
                 # Update the camera list to account for name change 
-                #camera_list = [cam.GetFriendlyName() for cam in BaslerCamera.list_cameras()]
-                #param = self.settings.param('camera_list')
-                #param.setLimits(camera_list)
-                #param.sigLimitsChanged.emit(param, camera_list)
+                camera_list = [cam.GetFriendlyName() for cam in BaslerCamera.list_cameras()]
+                param = self.settings.param('camera_list')
+                param.setLimits(camera_list)
+                param.sigLimitsChanged.emit(param, camera_list)
                 return
             if name == 'TriggerMode':
+                camera_attr = getattr(self.controller.camera, name)
                 if value:
                     camera_attr.SetIntValue(1)
                 else:
@@ -210,12 +207,14 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
                     self.save_frame_local = False
                 return
             if name == 'GainAuto':
+                camera_attr = getattr(self.controller.camera, name)
                 if value:
                     camera_attr.SetIntValue(1)
                 else:
                     camera_attr.SetIntValue(0)
                 return
             if name == 'ExposureAuto':
+                camera_attr = getattr(self.controller.camera, name)
                 if value:
                     camera_attr.SetIntValue(1)
                 else:
@@ -231,6 +230,7 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
             if name == 'Prefix':
                 return
             # All the rest, just do :
+            camera_attr = getattr(self.controller.camera, name)
             camera_attr.SetValue(value)
 
         if name == "update_roi":
@@ -268,7 +268,6 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
                 param.setValue(False)
                 param.sigValueChanged.emit(param, False)
 
-        # for self.user_id use camera.SetFriendlyName()
 
     def _prepare_view(self):
         """Preparing a data viewer by emitting temporary data. Typically, needs to be called whenever the
@@ -339,7 +338,8 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
             self.emit_status(ThreadCommand('Update_Status', [str(e), "log"]))
 
 
-    def emit_data_callback(self, frame) -> None:
+    def emit_data_callback(self, frame_data: dict) -> None:
+        frame = frame_data['frame']
         if not self.save_frame_local and not self.save_frame_leco:
             dte = DataToExport(f'{self.user_id}', data=[DataFromPlugins(
                 name=f'{self.user_id}',
@@ -362,6 +362,7 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
             filetype = self.settings.child('trigger', 'TriggerSaveOptions', 'Filetype').value()
             ulid = None
             if filetype == 'h5':
+                timestamp = frame_data['timestamp']
                 if self.metadata is not None:
                     filepath = self.metadata['filepath']
                     filename = self.metadata['filename']
@@ -370,7 +371,17 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
                         f.create_dataset(filename, data=frame)
                         f.attrs['ulid'] = ulid
                         f.attrs['user_id'] = self.user_id
+                        f.attrs['timestamp'] = timestamp
                     self.metadata = None
+                else:
+                    filename = f"{prefix}{index.value()}.{filetype}"
+                    with h5py.File(os.path.join(filepath, filename), 'w') as f:
+                        f.create_dataset(filename, data=frame)
+                        f.attrs['ulid'] = str(ULID())
+                        f.attrs['user_id'] = self.user_id
+                        f.attrs['timestamp'] = timestamp
+                    index.setValue(index.value()+1)
+                    index.sigValueChanged.emit(index, index.value())
             else:
                 if not filepath:
                     filepath = os.path.join(os.path.expanduser('~'), 'Downloads', f"{prefix}{index.value()}.{filetype}")

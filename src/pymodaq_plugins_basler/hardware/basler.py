@@ -276,7 +276,8 @@ class ImageEventHandler(pylon.ImageEventHandler):
         """Process a grabbed image."""
         if grabResult.GrabSucceeded():
             self.frame_ready = True
-            self.signals.imageGrabbed.emit(grabResult.GetArray())
+            frame_data = {"frame": grabResult.GetArray(), "timestamp": grabResult.GetTimeStamp()}
+            self.signals.imageGrabbed.emit(frame_data)
         else:
             log.warning(
                 (
