@@ -7,13 +7,14 @@ from ulid import ULID
 from pymodaq.utils.parameter import Parameter
 from pymodaq.utils.data import Axis, DataFromPlugins, DataToExport
 from pymodaq.utils.daq_utils import ThreadCommand
-from pymodaq.control_modules.viewer_utility_classes import main, DAQ_Viewer_base, comon_parameters
+from pymodaq.control_modules.viewer_utility_classes import main, DAQ_Viewer_base, comon_parameters, params
 
 # Suppress only NumPy RuntimeWarnings (bc of crosshair bug)
 import warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning, module="numpy")
 
 from pymodaq_plugins_basler.hardware.basler import BaslerCamera, TemperatureMonitor
+from pymodaq_plugins_basler.resources.extended_publisher import ExtendedPublisher
 from qtpy import QtWidgets, QtCore
 
 if not hasattr(QtCore, "pyqtSignal"):
@@ -38,7 +39,15 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
             {'title': 'Binning', 'name': 'binning', 'type': 'list', 'limits': [1, 2], 'default': 1},
             {'title': 'Image Width', 'name': 'width', 'type': 'int', 'value': 1280, 'readonly': True},
             {'title': 'Image Height', 'name': 'height', 'type': 'int', 'value': 960, 'readonly': True},
-        ]}]
+        ]},
+        {'title': 'LECO Logging', 'name': 'leco_log', 'type': 'group', 'children': [
+            {'title': 'Send Frame Data ?', 'name': 'leco_send', 'type': 'led_push', 'value': False, 'default': False},
+            {'title': 'Metadata', 'name': 'leco_metadata', 'type': 'str', 'value': '', 'readonly': True},
+            {'title': 'Publisher Name', 'name': 'publisher_name', 'type': 'str', 'value': ''},
+            {'title': 'Proxy Server Address', 'name': 'proxy_address', 'type': 'str', 'value': 'localhost', 'default': 'localhost'}, # Either IP or hostname of LECO proxy server
+            {'title': 'Proxy Server Port', 'name': 'proxy_port', 'type': 'int', 'value': 11100, 'default': 11100},
+        ]}
+        ]
 
     def ini_attributes(self):
         """Initialize attributes"""
@@ -47,12 +56,12 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
         self.user_id = None
 
         self.data_shape = None
-        self.save_frame_local = False
-        self.frame_saved = False
+        self.save_frame = False
 
         # For LECO operation
         self.metadata = None
-        self.save_frame_leco = False
+        self.data_publisher = None
+        self.send_frame_leco = False
 
     def init_controller(self) -> BaslerCamera:
         # Init camera 
@@ -112,6 +121,18 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
         # Start thread for camera temp. monitoring
         self.start_temperature_monitoring()
 
+        # Setup data publisher for LECO if data publisher name is set (ideally it should match the LECO actor name)
+        publisher_name = self.settings.child('leco_log', 'publisher_name').value()
+        proxy_address = self.settings.child('leco_log', 'proxy_address').value()
+        proxy_port = self.settings.child('leco_log', 'proxy_port').value()
+        if publisher_name == '':
+            print("Publisher name is not set ! Set this first and then reinitialize for LECO logging.")
+            self.emit_status(ThreadCommand('Update_Status', ["Publisher name is not set ! Set this first and then reinitialize for LECO logging."]))
+        else:
+            self.data_publisher = ExtendedPublisher(full_name=publisher_name, host=proxy_address, port=proxy_port)
+            print(f"Data publisher {publisher_name} initialized for LECO logging")
+            self.emit_status(ThreadCommand('Update_Status', [f"Data publisher {publisher_name} initialized for LECO logging"]))
+                
         self._prepare_view()
         info = "Initialized camera"
         print(f"{self.user_id} camera initialized successfully")
@@ -174,11 +195,17 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
                 param.sigValueChanged.emit(param, False) 
                 return
             if value:
-                self.save_frame_local = True
+                self.save_frame = True
                 return
             else:
-                self.save_frame_local = False
+                self.save_frame = False
                 return
+        if name == 'leco_send':
+            if value:
+                self.send_frame_leco = True
+            else:
+                self.send_frame_leco = False
+            return
     
         if name in self.controller.attribute_names:
             # Special cases
@@ -340,77 +367,98 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
 
     def emit_data_callback(self, frame_data: dict) -> None:
         frame = frame_data['frame']
-        if not self.save_frame_local and not self.save_frame_leco:
-            dte = DataToExport(f'{self.user_id}', data=[DataFromPlugins(
-                name=f'{self.user_id}',
-                data=[np.squeeze(frame)],
-                dim=self.data_shape,
-                labels=[f'{self.user_id}_{self.data_shape}'],
-                axes=self.axes)])
-        elif self.save_frame_local and not self.save_frame_leco:
-            self.frame_saved = False
-            dte = DataToExport(f'{self.user_id}', data=[DataFromPlugins(
-                name=f'{self.user_id}',
-                data=[np.squeeze(frame)],
-                dim=self.data_shape,
-                labels=[f'{self.user_id}_{self.data_shape}'],
-                do_save=True,
-                axes=self.axes)])
-            index = self.settings.child('trigger', 'TriggerSaveOptions', 'TriggerSaveIndex')
-            filepath = self.settings.child('trigger', 'TriggerSaveOptions', 'TriggerSaveLocation').value()
-            prefix = self.settings.child('trigger', 'TriggerSaveOptions', 'Prefix').value()
-            filetype = self.settings.child('trigger', 'TriggerSaveOptions', 'Filetype').value()
-            ulid = None
-            if filetype == 'h5':
-                timestamp = frame_data['timestamp']
-                if self.metadata is not None:
-                    filepath = self.metadata['filepath']
-                    filename = self.metadata['filename']
-                    ulid = self.metadata['ulid']
-                    with h5py.File(os.path.join(filepath, filename), 'w') as f:
-                        f.create_dataset(filename, data=frame)
-                        f.attrs['ulid'] = ulid
-                        f.attrs['user_id'] = self.user_id
-                        f.attrs['timestamp'] = timestamp
-                    self.metadata = None
-                else:
-                    filename = f"{prefix}{index.value()}.{filetype}"
-                    with h5py.File(os.path.join(filepath, filename), 'w') as f:
-                        f.create_dataset(filename, data=frame)
-                        f.attrs['ulid'] = str(ULID())
-                        f.attrs['user_id'] = self.user_id
-                        f.attrs['timestamp'] = timestamp
-                    index.setValue(index.value()+1)
-                    index.sigValueChanged.emit(index, index.value())
+        timestamp = frame_data['timestamp']
+        shape = frame.shape
+
+        # First emit data to the GUI
+        dte = DataToExport(f'{self.user_id}', data=[DataFromPlugins(
+            name=f'{self.user_id}',
+            data=[np.squeeze(frame)],
+            dim=self.data_shape,
+            labels=[f'{self.user_id}_{self.data_shape}'],
+            axes=self.axes)])
+        self.dte_signal.emit(dte)
+
+        # Now, handle data saving with filepath given by user in trigger save settings or from metadata set remotely with LECO
+        if not self.save_frame:
+            if self.metadata is not None:
+                metadata = self.metadata
             else:
+                metadata = {'burst_metadata':{}, 'file_metadata': {}, 'detector_metadata': {}}
+                metadata['burst_metadata']['ulid'] = str(ULID())
+                metadata['burst_metadata']['user_id'] = self.user_id
+                metadata['burst_metadata']['timestamp'] = timestamp
+            count = 0
+            for name in self.controller.attribute_names:
+                if 'Gain' in name and 'Auto' not in name:
+                    metadata['detector_metadata']['gain'] = self.settings.child('gain', name).value()
+                    count += 1
+                if 'ExposureTime' in name:
+                    metadata['detector_metadata']['exposure_time'] = self.settings.child('exposure', 'ExposureTimeRaw').value()
+                    count += 1
+                if count == 2:
+                    break
+            metadata['detector_metadata']['shape'] = shape
+        
+        elif self.save_frame:
+            index = self.settings.child('trigger', 'TriggerSaveOptions', 'TriggerSaveIndex')
+            if self.metadata is not None:
+                metadata = self.metadata
+                filepath = self.metadata['file_metadata']['filepath']
+                filename = self.metadata['file_metadata']['filename']
+                index.setValue(self.metadata['index'])
+                index.sigValueChanged.emit(index, index.value())
+            else:
+                filepath = self.settings.child('trigger', 'TriggerSaveOptions', 'TriggerSaveLocation').value()
+                prefix = self.settings.child('trigger', 'TriggerSaveOptions', 'Prefix').value()
+                filetype = self.settings.child('trigger', 'TriggerSaveOptions', 'Filetype').value()
                 if not filepath:
                     filepath = os.path.join(os.path.expanduser('~'), 'Downloads', f"{prefix}{index.value()}.{filetype}")
                 else:
                     filepath = os.path.join(filepath, f"{prefix}{index.value()}.{filetype}")
-                iio.imwrite(filepath, frame)
-                index.setValue(index.value()+1)
-                index.sigValueChanged.emit(index, index.value())
-            self.frame_saved = True
-        elif self.save_frame_leco:
-            self.frame_saved = False
-            dte = DataToExport(f'{self.user_id}', data=[DataFromPlugins(
-                name=f'{self.user_id}',
-                data=[np.squeeze(frame)],
-                dim=self.data_shape,
-                labels=[f'{self.user_id}_{self.data_shape}'],
-                do_save=True,
-                axes=self.axes)])
-            if self.metadata is not None:
-                filepath = self.metadata['filepath']
-                filename = self.metadata['filename']
-                ulid = self.metadata['ulid']
+                metadata['burst_metadata']['ulid'] = str(ULID())
+                metadata['burst_metadata']['user_id'] = self.user_id
+                metadata['burst_metadata']['timestamp'] = timestamp
+                metadata['file_metadata']['filepath'] = filepath
+                metadata['file_metadata']['filename'] = filename
+                metadata['index'] = index.value()
+                count = 0
+                for name in self.controller.attribute_names:
+                    if 'Gain' in name and 'Auto' not in name:
+                        metadata['detector_metadata']['gain'] = self.settings.child('gain', name).value()
+                        count += 1
+                    if 'ExposureTime' in name:
+                        metadata['detector_metadata']['exposure_time'] = self.settings.child('exposure', 'ExposureTimeRaw').value()
+                        count += 1
+                    if count == 2:
+                        break
+
+            metadata['detector_metadata']['shape'] = shape
+            if filetype == 'h5':
                 with h5py.File(os.path.join(filepath, filename), 'w') as f:
                     f.create_dataset(filename, data=frame)
-                    f.attrs['ulid'] = ulid
-                    f.attrs['user_id'] = self.user_id
-                self.frame_saved = True
-                self.metadata = None
-        self.dte_signal.emit(dte)
+                    f.attrs['ulid'] = metadata['burst_metadata']['ulid']
+                    f.attrs['user_id'] = metadata['burst_metadata']['user_id']
+                    f.attrs['timestamp'] = timestamp
+                    f.attrs['exposure_time'] = metadata['detector_metadata']['exposure_time']
+                    f.attrs['gain'] = metadata['detector_metadata']['gain']
+                    f.attrs['shape'] = metadata['detector_metadata']['shape']
+            else:
+                iio.imwrite(filepath, frame)
+            index.setValue(index.value()+1)
+            index.sigValueChanged.emit(index, index.value())
+
+        # Finally, handle publishing with LECO, including frame raw data if enabled
+        if self.data_publisher is not None:
+            if self.send_frame_leco:                        
+                self.data_publisher.send_data2({self.settings.child('leco_log', 'publisher_name').value(): 
+                                                {'frame': frame, 'metadata': metadata, 'device_type': 'detector'}})
+            else:
+                self.data_publisher.send_data2({self.settings.child('leco_log', 'publisher_name').value(): 
+                                                {'metadata': metadata, 'device_type': 'detector'}})
+
+        # Prepare for next frame
+        self.metadata = None
         self.controller.imageEventHandler.frame_ready = False
 
     def stop(self):
