@@ -9,6 +9,7 @@ from pymodaq.utils.data import Axis, DataFromPlugins, DataToExport
 from pymodaq.utils.daq_utils import ThreadCommand
 from pymodaq.control_modules.viewer_utility_classes import main, DAQ_Viewer_base, comon_parameters, params
 
+
 # Suppress only NumPy RuntimeWarnings (bc of crosshair bug)
 import warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning, module="numpy")
@@ -42,10 +43,11 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
         ]},
         {'title': 'LECO Logging', 'name': 'leco_log', 'type': 'group', 'children': [
             {'title': 'Send Frame Data ?', 'name': 'leco_send', 'type': 'led_push', 'value': False, 'default': False},
-            {'title': 'Metadata', 'name': 'leco_metadata', 'type': 'str', 'value': '', 'readonly': True},
             {'title': 'Publisher Name', 'name': 'publisher_name', 'type': 'str', 'value': ''},
             {'title': 'Proxy Server Address', 'name': 'proxy_address', 'type': 'str', 'value': 'localhost', 'default': 'localhost'}, # Either IP or hostname of LECO proxy server
             {'title': 'Proxy Server Port', 'name': 'proxy_port', 'type': 'int', 'value': 11100, 'default': 11100},
+            {'title': 'Metadata', 'name': 'leco_metadata', 'type': 'str', 'value': '', 'readonly': True},
+            {'title': 'Saving Base Path', 'name': 'leco_basepath', 'type': 'str', 'value': ''},
         ]}
         ]
 
@@ -67,8 +69,8 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
         # Init camera 
         self.user_id = self.settings.param('camera_list').value()
         self.emit_status(ThreadCommand('Update_Status', [f"Trying to connect to {self.user_id}", 'log']))
-        device_info = BaslerCamera.list_cameras()
-        for devInfo in device_info:
+        camera_list = BaslerCamera.list_cameras()
+        for devInfo in camera_list:
             if devInfo.GetFriendlyName() == self.user_id:
                 return BaslerCamera(info=devInfo, callback=self.emit_data_callback)
         self.emit_status(ThreadCommand('Update_Status', ["Camera not found", 'log']))
@@ -118,9 +120,6 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
         # Setup continuous acquisition & allow adjustable frame rate
         self.controller.setup_acquisition()
 
-        # Start thread for camera temp. monitoring
-        self.start_temperature_monitoring()
-
         # Setup data publisher for LECO if data publisher name is set (ideally it should match the LECO actor name)
         publisher_name = self.settings.child('leco_log', 'publisher_name').value()
         proxy_address = self.settings.child('leco_log', 'proxy_address').value()
@@ -132,6 +131,15 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
             self.data_publisher = ExtendedPublisher(full_name=publisher_name, host=proxy_address, port=proxy_port)
             print(f"Data publisher {publisher_name} initialized for LECO logging")
             self.emit_status(ThreadCommand('Update_Status', [f"Data publisher {publisher_name} initialized for LECO logging"]))
+
+
+        try:
+            base_path = QtCore.QSettings().value()('leco_log/basepath', '')
+        except Exception as e:
+            print(f"Error finding LECO base path: {e}")
+            base_path = ''
+        self.settings.child('leco_log', 'leco_basepath').setValue(base_path)
+
                 
         self._prepare_view()
         info = "Initialized camera"
@@ -162,6 +170,7 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
             param.setValue(False)
             param.sigValueChanged.emit(param, False) 
             return
+        
         if name == "device_state_load":
             filepath = self.settings.child('device_state', 'device_state_to_load').value()
             self.controller.stop_grabbing()
@@ -180,12 +189,14 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
             self.controller.start_grabbing(self.settings.param('AcquisitionFrameRateAbs').value())
             self.emit_status(ThreadCommand('Update_Status', [f"Device state loaded from {filepath}"]))
             return
+        
         if name == 'PixelFormat':
             self.controller.stop_grabbing()
             self.controller.camera.PixelFormat.SetValue(value)
             self._prepare_view()
             self.controller.start_grabbing(self.settings.param('AcquisitionFrameRateAbs').value())
             return
+        
         if name == 'TriggerSave':
             if not self.settings.child('trigger', 'TriggerMode').value():
                 print("Trigger mode is not active ! Start triggering first !")
@@ -200,12 +211,28 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
             else:
                 self.save_frame = False
                 return
+            
         if name == 'leco_send':
             if value:
                 self.send_frame_leco = True
             else:
                 self.send_frame_leco = False
             return
+        if name == 'leco_basepath':
+            base_path = value
+            if not os.path.exists(base_path):
+                print(f"LECO saving base path {base_path} does not exist !")
+                self.emit_status(ThreadCommand('Update_Status', [f"LECO saving base path {base_path} does not exist !"]))
+            else:
+                try:
+                    QtCore.QSettings().setValue('leco_log/basepath', base_path)
+                    print(f"LECO saving base path set to {base_path}")
+                    self.emit_status(ThreadCommand('Update_Status', [f"LECO saving base path set to {base_path}"]))
+                except Exception as e:
+                    print(f"Error setting LECO saving base path: {e}")
+                    self.emit_status(ThreadCommand('Update_Status', [f"Error setting LECO saving base path: {e}"]))
+        if name == 'leco_metadata':
+            self.metadata = value
     
         if name in self.controller.attribute_names:
             # Special cases
@@ -256,6 +283,19 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
                 return
             if name == 'Prefix':
                 return
+            if name == 'TemperatureMonitoring':
+                if value:
+                    # Start thread for camera temp. monitoring
+                    self.start_temperature_monitoring()
+                else:
+                    # Stop background threads
+                    if hasattr(self, 'temp_worker'):
+                        self.temp_worker.stop()
+                    if hasattr(self, 'temp_thread'):
+                        self.temp_thread.quit()
+                        self.temp_thread.wait()
+                return
+
             # All the rest, just do :
             camera_attr = getattr(self.controller.camera, name)
             camera_attr.SetValue(value)
@@ -359,7 +399,7 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
             else:
                 self.controller.start_grabbing(self.settings.param('AcquisitionFrameRateAbs').value())
                 while not self.controller.imageEventHandler.frame_ready:
-                    pass
+                    pass # do nothing until a frame is ready
                 self.controller.stop_grabbing()
         except Exception as e:
             self.emit_status(ThreadCommand('Update_Status', [str(e), "log"]))
@@ -406,8 +446,6 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
                 metadata = self.metadata
                 filepath = self.metadata['file_metadata']['filepath']
                 filename = self.metadata['file_metadata']['filename']
-                index.setValue(self.metadata['index'])
-                index.sigValueChanged.emit(index, index.value())
             else:
                 filepath = self.settings.child('trigger', 'TriggerSaveOptions', 'TriggerSaveLocation').value()
                 prefix = self.settings.child('trigger', 'TriggerSaveOptions', 'Prefix').value()
@@ -421,7 +459,6 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
                 metadata['burst_metadata']['timestamp'] = timestamp
                 metadata['file_metadata']['filepath'] = filepath
                 metadata['file_metadata']['filename'] = filename
-                metadata['index'] = index.value()
                 count = 0
                 for name in self.controller.attribute_names:
                     if 'Gain' in name and 'Auto' not in name:
@@ -432,6 +469,8 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
                         count += 1
                     if count == 2:
                         break
+                index.setValue(index.value()+1)
+                index.sigValueChanged.emit(index, index.value())
 
             metadata['detector_metadata']['shape'] = shape
             if filetype == 'h5':
@@ -445,17 +484,19 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
                     f.attrs['shape'] = metadata['detector_metadata']['shape']
             else:
                 iio.imwrite(filepath, frame)
-            index.setValue(index.value()+1)
-            index.sigValueChanged.emit(index, index.value())
 
-        # Finally, handle publishing with LECO, including frame raw data if enabled
+        # Finally, handle publishing with LECO, including frame raw data if enabled to log frame captured/saved event
         if self.data_publisher is not None:
             if self.send_frame_leco:                        
                 self.data_publisher.send_data2({self.settings.child('leco_log', 'publisher_name').value(): 
-                                                {'frame': frame, 'metadata': metadata, 'device_type': 'detector'}})
+                                                {'frame': frame, 'metadata': metadata, 
+                                                 'device_type': 'detector', 
+                                                 'serial_number': self.controller.device_info.GetSerialNumber()}})
             else:
                 self.data_publisher.send_data2({self.settings.child('leco_log', 'publisher_name').value(): 
-                                                {'metadata': metadata, 'device_type': 'detector'}})
+                                                {'metadata': metadata, 
+                                                 'device_type': 'detector',
+                                                 'serial_number': self.controller.device_info.GetSerialNumber()}})
 
         # Prepare for next frame
         self.metadata = None
@@ -487,9 +528,9 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
         self.roi_info = roi_info
     
     def crosshair(self, crosshair_info, ind_viewer=0):
-        sleep_ms = 150
         self.crosshair_info = crosshair_info
-        QtCore.QTimer.singleShot(sleep_ms, QtWidgets.QApplication.processEvents)
+        # Adding a small delay improves performance 
+        QtCore.QTimer.singleShot(200, QtWidgets.QApplication.processEvents)
 
     def camera_lost(self):
         self.close()
@@ -511,13 +552,15 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
         self.temp_thread.start()
 
     def on_temperature_update(self, temp: float):
-        param = self.settings.child('misc', 'TemperatureAbs')
+        param = self.settings.child('temperature', 'TemperatureAbs')
         param.setValue(temp)
         param.sigValueChanged.emit(param, temp)
+        # TODO maybe close device if temperature is too high, and allow user to set this threshold ?
         if temp > 60:
-            self.emit_status(ThreadCommand('Update_Status', [f"WARNING: {self.user_id} camera is too hot !!"]))
+            self.emit_status(ThreadCommand('Update_Status', [f"WARNING: {self.user_id} camera is hot !!"]))
 
 
+    # This will add self.attributes, which is derived from the model config file, to self.settings
     def add_attributes_to_settings(self):
         existing_group_names = {child.name() for child in self.settings.children()}
 
@@ -545,7 +588,7 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
                 if attr_name not in existing_group_names:
                     self.settings.addChild(attr)
         
-    
+    # This will ensure that the UI shows the current camera parameters values and limits
     def update_params_ui(self):
 
         # Common syntax for any camera model
@@ -564,6 +607,8 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
                 continue
             if param_name == "device_state":
                 continue
+            if param_name == "temperature":
+                continue
 
             if param_type == 'group':
                 # Recurse over children in groups
@@ -573,8 +618,7 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
                     # Special case: skip these
                     if child_name == 'TriggerSaveOptions':
                         continue
-                    if child_name == 'TemperatureAbs':
-                        continue
+
                     camera_attr = getattr(self.controller.camera, child_name)
 
                     try:
