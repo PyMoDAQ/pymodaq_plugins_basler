@@ -289,11 +289,7 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
                     self.start_temperature_monitoring()
                 else:
                     # Stop background threads
-                    if hasattr(self, 'temp_worker'):
-                        self.temp_worker.stop()
-                    if hasattr(self, 'temp_thread'):
-                        self.temp_thread.quit()
-                        self.temp_thread.wait()
+                    self.stop_temp_monitoring()
                 return
 
             # All the rest, just do :
@@ -430,7 +426,7 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
                 metadata['burst_metadata']['timestamp'] = timestamp
             # Include device metadata to send back
             # Account for some uncertainty in timestamp of frame, assume ~100 us for now
-            metadata['detector_metadata']['fuzziness'] = 100 
+            metadata['detector_metadata']['fuzziness'] = 0.1
             count = 0
             for name in self.controller.attribute_names:
                 if 'Gain' in name and 'Auto' not in name:
@@ -465,7 +461,7 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
                 index.setValue(index.value()+1)
                 index.sigValueChanged.emit(index, index.value())
 
-            metadata['detector_metadata']['fuzziness'] = 100 # Account for some uncertainty in timestamp of frame, assume ~100 us for now
+            metadata['detector_metadata']['fuzziness'] = 0.1 # Account for some uncertainty in timestamp of frame, assume ~100 us for now
             count = 0
             for name in self.controller.attribute_names:
                 if 'Gain' in name and 'Auto' not in name:
@@ -517,11 +513,7 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
         self.controller.close()
             
         # Stop any background threads
-        if hasattr(self, 'temp_worker'):
-            self.temp_worker.stop()
-        if hasattr(self, 'temp_thread'):
-            self.temp_thread.quit()
-            self.temp_thread.wait()
+        self.stop_temp_monitoring()
 
         self.status.initialized = False
         self.status.controller = None
@@ -555,6 +547,22 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
         self.temp_thread.finished.connect(self.temp_thread.deleteLater)
 
         self.temp_thread.start()
+
+    def stop_temp_monitoring(self):
+        if hasattr(self, 'temp_worker') and self.temp_worker is not None:
+            self.temp_worker.stop()
+            self.temp_worker = None
+        if hasattr(self, 'temp_thread') and self.temp_thread is not None:
+            try:
+                self.temp_thread.quit()
+                self.temp_thread.wait()
+            except RuntimeError:
+                pass  # Already deleted
+            self.temp_thread = None
+        # Make sure temp. monitoring param is false in GUI
+        param = self.settings.child('temperature', 'TemperatureMonitor')
+        param.setValue(False)
+        param.sigValueChanged.emit(param, param.value())
 
     def on_temperature_update(self, temp: float):
         param = self.settings.child('temperature', 'TemperatureAbs')
