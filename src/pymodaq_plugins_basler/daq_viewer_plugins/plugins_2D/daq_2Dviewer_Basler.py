@@ -2,7 +2,7 @@ import numpy as np
 import os
 import imageio as iio
 import h5py
-from ulid import ULID
+from uuid_extensions import uuid7, uuid7str
 
 from pymodaq.utils.parameter import Parameter
 from pymodaq.utils.data import Axis, DataFromPlugins, DataToExport
@@ -424,7 +424,7 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
                 metadata = self.metadata
             else:
                 metadata = {'burst_metadata':{}, 'file_metadata': {}, 'detector_metadata': {}}
-                metadata['burst_metadata']['ulid'] = str(ULID())
+                metadata['burst_metadata']['uuid'] = uuid7str()
                 metadata['burst_metadata']['user_id'] = self.user_id
                 metadata['burst_metadata']['timestamp'] = timestamp
             count = 0
@@ -453,7 +453,7 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
                     filepath = os.path.join(os.path.expanduser('~'), 'Downloads', f"{prefix}{index.value()}.{filetype}")
                 else:
                     filepath = os.path.join(filepath, f"{prefix}{index.value()}.{filetype}")
-                metadata['burst_metadata']['ulid'] = str(ULID())
+                metadata['burst_metadata']['uuid'] = uuid7str()
                 metadata['burst_metadata']['user_id'] = self.user_id
                 metadata['burst_metadata']['timestamp'] = timestamp
                 metadata['file_metadata']['filepath'] = filepath
@@ -475,7 +475,7 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
             if filetype == 'h5':
                 with h5py.File(os.path.join(filepath, filename), 'w') as f:
                     f.create_dataset(filename, data=frame)
-                    f.attrs['ulid'] = metadata['burst_metadata']['ulid']
+                    f.attrs['uuid'] = metadata['burst_metadata']['uuid']
                     f.attrs['user_id'] = metadata['burst_metadata']['user_id']
                     f.attrs['timestamp'] = timestamp
                     f.attrs['exposure_time'] = metadata['detector_metadata']['exposure_time']
