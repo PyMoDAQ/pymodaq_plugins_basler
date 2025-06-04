@@ -16,7 +16,8 @@ dependencies = [
     'numpy',  # for Basler camera
     'pypylon',
     'imageio',
-    'uuid6'
+    'uuid6',
+    'h5py'
 ]
 
 authors = [
