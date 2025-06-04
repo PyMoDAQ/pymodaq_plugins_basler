@@ -432,8 +432,8 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
                 if 'Gain' in name and 'Auto' not in name:
                     metadata['detector_metadata']['gain'] = self.settings.child('gain', name).value()
                     count += 1
-                if 'ExposureTime' in name:
-                    metadata['detector_metadata']['exposure_time'] = self.settings.child('exposure', 'ExposureTimeRaw').value()
+                if 'Exposure' in name and 'Auto' not in name:
+                    metadata['detector_metadata']['exposure_time'] = self.settings.child('exposure', name).value()
                     count += 1
                 if count == 2:
                     break
@@ -463,8 +463,8 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
                     if 'Gain' in name and 'Auto' not in name:
                         metadata['detector_metadata']['gain'] = self.settings.child('gain', name).value()
                         count += 1
-                    if 'ExposureTime' in name:
-                        metadata['detector_metadata']['exposure_time'] = self.settings.child('exposure', 'ExposureTimeRaw').value()
+                    if 'Exposure' in name and 'Auto' not in name:
+                        metadata['detector_metadata']['exposure_time'] = self.settings.child('exposure', name).value()
                         count += 1
                     if count == 2:
                         break
@@ -632,7 +632,7 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
                             continue  # Unsupported type, skip
 
                         # Special case: if parameter is related to ExposureTime, convert to ms from us
-                        if 'ExposureTime' in child_name:
+                        if 'Exposure' in child_name and 'Auto' not in child_name:
                             value *= 1e-3
 
                         # Set the value
@@ -644,7 +644,7 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
                                 min_limit = camera_attr.GetMin()
                                 max_limit = camera_attr.GetMax()
 
-                                if 'ExposureTime' in child_name:
+                                if 'Exposure' in child_name and 'Auto' not in child_name:
                                     min_limit *= 1e-3
                                     max_limit *= 1e-3
 
@@ -668,7 +668,7 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
                         continue  # Unsupported type, skip
 
                     # Special case: if parameter is related to ExposureTime, convert to ms from us
-                    if 'ExposureTime' in param_name:
+                    if 'Exposure' in param_name and 'Auto' not in param_name:
                         value *= 1e-3
 
                     # Set the value
@@ -680,7 +680,7 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
                             max_limit = camera_attr.GetMax()
 
 
-                            if param_name == 'ExposureTime':
+                            if 'Exposure' in param_name and 'Auto' not in param_name:
                                 min_limit *= 1e-3
                                 max_limit *= 1e-3
 
