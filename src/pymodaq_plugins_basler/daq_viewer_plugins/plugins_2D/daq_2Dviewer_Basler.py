@@ -165,16 +165,15 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
             self.ini_detector()
 
         if name == "device_state_save":
-            self.controller.camera.device_save_state_to_file(self.controller.default_device_state_path)
+            self.controller.save_device_state()
             param = self.settings.child('device_state', 'device_state_save')
             param.setValue(False)
-            param.sigValueChanged.emit(param, False) 
+            param.sigValueChanged.emit(param, False)
             return
         
         if name == "device_state_load":
-            filepath = self.settings.child('device_state', 'device_state_to_load').value()
             self.controller.stop_grabbing()
-            self.controller.load_device_state(filepath)
+            self.controller.load_device_state()
             # Reinitialize what is needed
             self.controller.setup_acquisition()
             # Update the UI with available and current camera parameters
@@ -187,7 +186,7 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
                         child.sigValueChanged.emit(child, child.value())
             self._prepare_view()
             self.controller.start_grabbing(self.settings.param('AcquisitionFrameRateAbs').value())
-            self.emit_status(ThreadCommand('Update_Status', [f"Device state loaded from {filepath}"]))
+            self.emit_status(ThreadCommand('Update_Status', [f"Device state loaded"]))
             return
         
         if name == 'PixelFormat':

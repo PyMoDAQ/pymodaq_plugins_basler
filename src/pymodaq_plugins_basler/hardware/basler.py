@@ -186,12 +186,13 @@ class BaslerCamera:
         except Exception as e:
             print(f"Failed to save device state: {e}")
 
-    def load_device_state(self, load_path):
+    def load_device_state(self):
+        load_path = self.default_device_state_path
         node_map = self.camera.GetNodeMap()
         if os.path.isfile(load_path):
             try:
                 pylon.FeaturePersistence.Load(load_path, node_map)
-                print(f"Device state loaded from {load_path}")
+                print(f"Device state loaded")
             except Exception as e:
                 print(f"Failed to load device state: {e}")
         else:

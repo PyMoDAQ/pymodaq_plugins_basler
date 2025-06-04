@@ -84,8 +84,8 @@
         "name": "device_state", 
         "type": "group",
         "children": {
-            "device_state_load": {"title": "Load Device State ?", "name": "device_state_load", "type": "bool_push", "value": false},
-            "device_state_save": {"title": "Save Device State ?", "name": "device_state_save", "type": "bool_push", "value": false}
+            "device_state_save": {"title": "Save Device State ?", "name": "device_state_save", "type": "bool_push", "value": false},
+            "device_state_load": {"title": "Load Device State ?", "name": "device_state_load", "type": "bool_push", "value": false}
         }
     }
 }
