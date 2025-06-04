@@ -42,7 +42,7 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
             {'title': 'Image Height', 'name': 'height', 'type': 'int', 'value': 960, 'readonly': True},
         ]},
         {'title': 'LECO Logging', 'name': 'leco_log', 'type': 'group', 'children': [
-            {'title': 'Send Frame Data ?', 'name': 'leco_send', 'type': 'led_push', 'value': False, 'default': False},
+            {'title': 'Send Frame Data ?', 'name': 'leco_send', 'type': 'led_push', 'value': False, 'default': False}, # This leads to huge performance drop as of now. Only use for single grabs, not continous
             {'title': 'Publisher Name', 'name': 'publisher_name', 'type': 'str', 'value': ''},
             {'title': 'Proxy Server Address', 'name': 'proxy_address', 'type': 'str', 'value': 'localhost', 'default': 'localhost'}, # Either IP or hostname of LECO proxy server
             {'title': 'Proxy Server Port', 'name': 'proxy_port', 'type': 'int', 'value': 11100, 'default': 11100},
@@ -283,7 +283,7 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
                 return
             if name == 'Prefix':
                 return
-            if name == 'TemperatureMonitoring':
+            if name == 'TemperatureMonitor':
                 if value:
                     # Start thread for camera temp. monitoring
                     self.start_temperature_monitoring()
