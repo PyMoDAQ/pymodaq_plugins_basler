@@ -2,7 +2,8 @@ import numpy as np
 import os
 import imageio as iio
 import h5py
-from uuid_extensions import uuid7, uuid7str
+import json
+from uuid6 import uuid7
 
 from pymodaq.utils.parameter import Parameter
 from pymodaq.utils.data import Axis, DataFromPlugins, DataToExport
@@ -47,7 +48,7 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
             {'title': 'Proxy Server Address', 'name': 'proxy_address', 'type': 'str', 'value': 'localhost', 'default': 'localhost'}, # Either IP or hostname of LECO proxy server
             {'title': 'Proxy Server Port', 'name': 'proxy_port', 'type': 'int', 'value': 11100, 'default': 11100},
             {'title': 'Metadata', 'name': 'leco_metadata', 'type': 'str', 'value': '', 'readonly': True},
-            {'title': 'Saving Base Path', 'name': 'leco_basepath', 'type': 'str', 'value': ''},
+            {'title': 'Saving Base Path', 'name': 'leco_basepath', 'type': 'str', 'value': ''}, # This is the base directory for a file path sent from a remote director in the metadata
         ]}
         ]
 
@@ -231,7 +232,7 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
                     print(f"Error setting LECO saving base path: {e}")
                     self.emit_status(ThreadCommand('Update_Status', [f"Error setting LECO saving base path: {e}"]))
         if name == 'leco_metadata':
-            self.metadata = value
+            self.metadata = json.loads(value)
     
         if name in self.controller.attribute_names:
             # Special cases
@@ -424,9 +425,12 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
                 metadata = self.metadata
             else:
                 metadata = {'burst_metadata':{}, 'file_metadata': {}, 'detector_metadata': {}}
-                metadata['burst_metadata']['uuid'] = uuid7str()
+                metadata['burst_metadata']['uuid'] = str(uuid7())
                 metadata['burst_metadata']['user_id'] = self.user_id
                 metadata['burst_metadata']['timestamp'] = timestamp
+            # Include device metadata to send back
+            # Account for some uncertainty in timestamp of frame, assume ~100 us for now
+            metadata['detector_metadata']['fuzziness'] = 100 
             count = 0
             for name in self.controller.attribute_names:
                 if 'Gain' in name and 'Auto' not in name:
@@ -453,24 +457,25 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
                     filepath = os.path.join(os.path.expanduser('~'), 'Downloads', f"{prefix}{index.value()}.{filetype}")
                 else:
                     filepath = os.path.join(filepath, f"{prefix}{index.value()}.{filetype}")
-                metadata['burst_metadata']['uuid'] = uuid7str()
+                metadata['burst_metadata']['uuid'] = str(uuid7())
                 metadata['burst_metadata']['user_id'] = self.user_id
                 metadata['burst_metadata']['timestamp'] = timestamp
                 metadata['file_metadata']['filepath'] = filepath
                 metadata['file_metadata']['filename'] = filename
-                count = 0
-                for name in self.controller.attribute_names:
-                    if 'Gain' in name and 'Auto' not in name:
-                        metadata['detector_metadata']['gain'] = self.settings.child('gain', name).value()
-                        count += 1
-                    if 'Exposure' in name and 'Auto' not in name:
-                        metadata['detector_metadata']['exposure_time'] = self.settings.child('exposure', name).value()
-                        count += 1
-                    if count == 2:
-                        break
                 index.setValue(index.value()+1)
                 index.sigValueChanged.emit(index, index.value())
 
+            metadata['detector_metadata']['fuzziness'] = 100 # Account for some uncertainty in timestamp of frame, assume ~100 us for now
+            count = 0
+            for name in self.controller.attribute_names:
+                if 'Gain' in name and 'Auto' not in name:
+                    metadata['detector_metadata']['gain'] = self.settings.child('gain', name).value()
+                    count += 1
+                if 'Exposure' in name and 'Auto' not in name:
+                    metadata['detector_metadata']['exposure_time'] = self.settings.child('exposure', name).value()
+                    count += 1
+                if count == 2:
+                    break
             metadata['detector_metadata']['shape'] = shape
             if filetype == 'h5':
                 with h5py.File(os.path.join(filepath, filename), 'w') as f:
@@ -481,6 +486,7 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
                     f.attrs['exposure_time'] = metadata['detector_metadata']['exposure_time']
                     f.attrs['gain'] = metadata['detector_metadata']['gain']
                     f.attrs['shape'] = metadata['detector_metadata']['shape']
+                    f.attrs['fuzziness'] = metadata['detector_metadata']['fuzziness']
             else:
                 iio.imwrite(filepath, frame)
 

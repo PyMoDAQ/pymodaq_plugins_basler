@@ -14,9 +14,9 @@ description = 'PyMoDAQ plugins for cameras of Basler'
 dependencies = [
     'pymodaq>=4.4.7',
     'numpy',  # for Basler camera
-    'pypylon'
+    'pypylon',
     'imageio',
-    'uuid7'
+    'uuid6'
 ]
 
 authors = [

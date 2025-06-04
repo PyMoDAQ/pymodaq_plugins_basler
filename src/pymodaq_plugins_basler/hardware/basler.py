@@ -16,7 +16,7 @@ log.addHandler(logging.NullHandler())
 
 
 class BaslerCamera:
-    """Control a Basler Dart camera in the style of pylablib.
+    """Control a Basler camera in the style of pylablib.
 
     It wraps an :class:`pylon.InstantCamera` instance.
 
@@ -292,7 +292,7 @@ class TemperatureMonitor(QtCore.QObject):
     temperature_updated = QtCore.pyqtSignal(float)
     finished = QtCore.pyqtSignal()
 
-    def __init__(self, camera_handle, check_interval=100):
+    def __init__(self, camera_handle, check_interval=5000):
         super().__init__()
         self._running = True
         self.camera = camera_handle
