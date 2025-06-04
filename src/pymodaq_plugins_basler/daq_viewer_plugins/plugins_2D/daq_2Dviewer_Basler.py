@@ -495,12 +495,12 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
             if self.send_frame_leco:                        
                 self.data_publisher.send_data2({self.settings.child('leco_log', 'publisher_name').value(): 
                                                 {'frame': frame, 'metadata': metadata, 
-                                                 'device_type': 'detector', 
+                                                 'message_type': 'detector', 
                                                  'serial_number': self.controller.device_info.GetSerialNumber()}})
             else:
                 self.data_publisher.send_data2({self.settings.child('leco_log', 'publisher_name').value(): 
                                                 {'metadata': metadata, 
-                                                 'device_type': 'detector',
+                                                 'message_type': 'detector',
                                                  'serial_number': self.controller.device_info.GetSerialNumber()}})
 
         # Prepare for next frame
@@ -560,7 +560,7 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
         param = self.settings.child('temperature', 'TemperatureAbs')
         param.setValue(temp)
         param.sigValueChanged.emit(param, temp)
-        # TODO maybe close device if temperature is too high, and allow user to set this threshold ?
+        # TODO maybe close device here if temperature is too high, and allow user to set this threshold ?
         if temp > 60:
             self.emit_status(ThreadCommand('Update_Status', [f"WARNING: {self.user_id} camera is hot !!"]))
 
