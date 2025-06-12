@@ -258,7 +258,7 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
                     param = self.settings.child('trigger', 'TriggerSaveOptions', 'TriggerSave')
                     param.setValue(False) # Turn off save on trigger if we turn off triggering
                     param.sigValueChanged.emit(param, False)
-                    self.save_frame_local = False
+                    self.save_frame = False
                 return
             if name == 'GainAuto':
                 camera_attr = getattr(self.controller.camera, name)
