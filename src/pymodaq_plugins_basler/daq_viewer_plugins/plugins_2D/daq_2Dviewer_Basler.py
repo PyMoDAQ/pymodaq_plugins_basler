@@ -135,7 +135,7 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
 
 
         try:
-            base_path = QtCore.QSettings().value()('leco_log/basepath', '')
+            base_path = QtCore.QSettings().value('leco_log/basepath', os.path.join(os.path.expanduser('~'), 'Downloads'))
         except Exception as e:
             print(f"Error finding LECO base path: {e}")
             base_path = ''
