@@ -143,6 +143,12 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
             base_path = ''
         self.settings.child('leco_log', 'leco_basepath').setValue(base_path)
 
+
+        # Make sure trigger mode led is false, since we always initialize camera with triggering off
+        param = self.settings.child('trigger', 'TriggerMode')
+        param.setValue(False)
+        param.sigValueChanged.emit(param, False)
+
                 
         self._prepare_view()
         info = "Initialized camera"
@@ -448,9 +454,8 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
                 metadata = self.metadata
                 filepath = self.metadata['file_metadata']['filepath']
                 filename = self.metadata['file_metadata']['filename']
-                basepath = self.settings_basler.value('leco_log/basepath', '')
-                if basepath:
-                    filepath = os.path.join(basepath, os.path.basename(filepath))                
+                basepath = self.settings.child('leco_log', 'leco_basepath').value()
+                filepath = os.path.normpath(os.path.join(basepath, filepath.lstrip(os.path.sep)))
             else:
                 filepath = self.settings.child('trigger', 'TriggerSaveOptions', 'TriggerSaveLocation').value()
                 prefix = self.settings.child('trigger', 'TriggerSaveOptions', 'Prefix').value()
@@ -479,7 +484,11 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
                     break
             metadata['detector_metadata']['shape'] = shape
             if filetype == 'h5':
-                with h5py.File(os.path.join(filepath, filename), 'w') as f:
+                if not filename.endswith('.h5'):
+                    filename += '.h5'
+                full_path = os.path.join(filepath, filename)
+                os.makedirs(os.path.dirname(full_path), exist_ok=True)
+                with h5py.File(full_path, 'w') as f:
                     dataset_name = f"frame_{timestamp}"
                     f.create_dataset(dataset_name, data=frame)
                     f.attrs['uuid'] = metadata['burst_metadata']['uuid']
@@ -490,7 +499,9 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
                     f.attrs['shape'] = metadata['detector_metadata']['shape']
                     f.attrs['fuzziness'] = metadata['detector_metadata']['fuzziness']
             else:
-                iio.imwrite(os.path.join(filepath, f"{filename}.{filetype}"), frame)
+                full_path = os.path.join(filepath, f"{filename}.{filetype}")
+                os.makedirs(os.path.dirname(full_path), exist_ok=True)
+                iio.imwrite(full_path, frame)
 
         # Finally, handle publishing with LECO, including frame raw data if enabled to log frame saved event
         if self.data_publisher is not None and self.save_frame:
@@ -500,6 +511,7 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
                                                  'message_type': 'detector', 
                                                  'serial_number': self.controller.device_info.GetSerialNumber()}})
             else:
+                pass
                 self.data_publisher.send_data2({self.settings.child('leco_log', 'publisher_name').value(): 
                                                 {'metadata': metadata, 
                                                  'message_type': 'detector',
