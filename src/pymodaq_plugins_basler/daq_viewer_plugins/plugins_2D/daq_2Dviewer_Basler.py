@@ -30,8 +30,10 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
     live_mode_available = True
 
     # For Basler, this returns a list of user defined camera names
-
     camera_list = [cam.GetFriendlyName() for cam in BaslerCamera.list_cameras()]
+
+    # Default place to store qsettings for this module
+    settings_basler = QtCore.QSettings("PyMoDAQ", "Basler")
 
     # Update the params
     params = comon_parameters + [{'title': 'Camera List:', 'name': 'camera_list', 'type': 'list', 'value': '', 'limits': camera_list},
@@ -133,9 +135,9 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
             print(f"Data publisher {publisher_name} initialized for LECO logging")
             self.emit_status(ThreadCommand('Update_Status', [f"Data publisher {publisher_name} initialized for LECO logging"]))
 
-
+        
         try:
-            base_path = QtCore.QSettings().value('leco_log/basepath', os.path.join(os.path.expanduser('~'), 'Downloads'))
+            base_path = self.settings_basler.value('leco_log/basepath', os.path.join(os.path.expanduser('~'), 'Downloads'))
         except Exception as e:
             print(f"Error finding LECO base path: {e}")
             base_path = ''
@@ -225,7 +227,7 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
                 self.emit_status(ThreadCommand('Update_Status', [f"LECO saving base path {base_path} does not exist !"]))
             else:
                 try:
-                    QtCore.QSettings().setValue('leco_log/basepath', base_path)
+                    self.settings_basler.setValue('leco_log/basepath', base_path)
                     print(f"LECO saving base path set to {base_path}")
                     self.emit_status(ThreadCommand('Update_Status', [f"LECO saving base path set to {base_path}"]))
                 except Exception as e:
@@ -419,7 +421,6 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
             if self.metadata is not None:
                 metadata = self.metadata
                 metadata['burst_metadata']['user_id'] = self.user_id
-                metadata['burst_metadata']['timestamp'] = timestamp
             else:
                 metadata = {'burst_metadata':{}, 'file_metadata': {}, 'detector_metadata': {}}
                 metadata['burst_metadata']['uuid'] = str(uuid7())
@@ -447,6 +448,9 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
                 metadata = self.metadata
                 filepath = self.metadata['file_metadata']['filepath']
                 filename = self.metadata['file_metadata']['filename']
+                basepath = self.settings_basler.value('leco_log/basepath', '')
+                if basepath:
+                    filepath = os.path.join(basepath, os.path.basename(filepath))                
             else:
                 filepath = self.settings.child('trigger', 'TriggerSaveOptions', 'TriggerSaveLocation').value()
                 prefix = self.settings.child('trigger', 'TriggerSaveOptions', 'Prefix').value()
@@ -476,7 +480,8 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
             metadata['detector_metadata']['shape'] = shape
             if filetype == 'h5':
                 with h5py.File(os.path.join(filepath, filename), 'w') as f:
-                    f.create_dataset(filename, data=frame)
+                    dataset_name = f"frame_{timestamp}"
+                    f.create_dataset(dataset_name, data=frame)
                     f.attrs['uuid'] = metadata['burst_metadata']['uuid']
                     f.attrs['user_id'] = metadata['burst_metadata']['user_id']
                     f.attrs['timestamp'] = timestamp
@@ -485,7 +490,7 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
                     f.attrs['shape'] = metadata['detector_metadata']['shape']
                     f.attrs['fuzziness'] = metadata['detector_metadata']['fuzziness']
             else:
-                iio.imwrite(os.path.join(os.path.expanduser('~'), 'Downloads', filename), frame)
+                iio.imwrite(os.path.join(filepath, f"{filename}.{filetype}"), frame)
 
         # Finally, handle publishing with LECO, including frame raw data if enabled to log frame saved event
         if self.data_publisher is not None and self.save_frame:
