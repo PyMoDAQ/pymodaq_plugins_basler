@@ -533,6 +533,11 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
         # Stop any background threads
         self.stop_temp_monitoring()
 
+        # Make sure we set this to false if camera disconnected
+        param = self.settings.child('trigger', 'TriggerSaveOptions', 'TriggerSave')
+        param.setValue(False) # Turn off save on trigger if triggering is off
+        param.sigValueChanged.emit(param, False) 
+
         self.status.initialized = False
         self.status.controller = None
         self.status.info = ""
