@@ -511,7 +511,6 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
                                                  'message_type': 'detector', 
                                                  'serial_number': self.controller.device_info.GetSerialNumber()}})
             else:
-                pass
                 self.data_publisher.send_data2({self.settings.child('leco_log', 'publisher_name').value(): 
                                                 {'metadata': metadata, 
                                                  'message_type': 'detector',
