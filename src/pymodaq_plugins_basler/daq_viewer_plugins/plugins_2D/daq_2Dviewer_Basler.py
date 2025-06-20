@@ -454,6 +454,7 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
                 metadata = self.metadata
                 filepath = self.metadata['file_metadata']['filepath']
                 filename = self.metadata['file_metadata']['filename']
+                self.metadata['burst_metadata']['user_id'] = self.user_id
                 basepath = self.settings.child('leco_log', 'leco_basepath').value()
                 filepath = os.path.normpath(os.path.join(basepath, filepath.lstrip(os.path.sep)))
             else:
@@ -498,7 +499,14 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
                     f.attrs['gain'] = metadata['detector_metadata']['gain']
                     f.attrs['shape'] = metadata['detector_metadata']['shape']
                     f.attrs['fuzziness'] = metadata['detector_metadata']['fuzziness']
+                    f.attrs['format_version'] = 'hdf5-v0.1'
             else:
+                if not filename.endswith(f".{filetype}"):
+                    filename += f".{filetype}"
+                if filetype not in ['png', 'jpg', 'jpeg', 'tiff', 'tif']:
+                    print(f"Unsupported file type {filetype} for saving frame. Supported types are: png, jpg, jpeg, tiff, tif, h5")
+                    self.emit_status(ThreadCommand('Update_Status', [f"Unsupported file type {filetype} for saving frame. Supported types are: png, jpg, jpeg, tiff, tif, h5"]))
+                    return
                 full_path = os.path.join(filepath, f"{filename}.{filetype}")
                 os.makedirs(os.path.dirname(full_path), exist_ok=True)
                 iio.imwrite(full_path, frame)
@@ -509,12 +517,14 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
                 self.data_publisher.send_data2({self.settings.child('leco_log', 'publisher_name').value(): 
                                                 {'frame': frame, 'metadata': metadata, 
                                                  'message_type': 'detector', 
-                                                 'serial_number': self.controller.device_info.GetSerialNumber()}})
+                                                 'serial_number': self.controller.device_info.GetSerialNumber(),
+                                                 'format_version': 'hdf5-v0.1'}})
             else:
                 self.data_publisher.send_data2({self.settings.child('leco_log', 'publisher_name').value(): 
                                                 {'metadata': metadata, 
                                                  'message_type': 'detector',
-                                                 'serial_number': self.controller.device_info.GetSerialNumber()}})
+                                                 'serial_number': self.controller.device_info.GetSerialNumber(),
+                                                 'format_version': 'hdf5-v0.1'}})
 
         # Prepare for next frame
         self.metadata = None
