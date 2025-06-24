@@ -1,15 +1,4 @@
 {
-    "device_info": {
-        "title": "Device Info",
-        "name": "device_info", 
-        "type": "group",
-        "children": {
-            "Device Model Name": {"title": "Device Model Name", "name": "DeviceModelName", "type": "str", "value": "", "readonly": true},
-            "Device Serial Number": {"title": "Device Serial Number", "name": "DeviceSerialNumber", "type": "str", "value": "", "readonly": true},
-            "Device Version": {"title": "Device Version", "name": "DeviceVersion", "type": "str", "value": "", "readonly": true},
-            "Device User ID": {"title": "Device User ID", "name": "DeviceUserID", "type": "str", "value": ""}
-        }
-    },
 
     "Acquisition Frame Rate": {"title": "Acquisition Frame Rate", "name": "AcquisitionFrameRateAbs", "type": "slide", "value": 15.0, "default": 15.0, "limits": [1.0, 15.0]},
 
