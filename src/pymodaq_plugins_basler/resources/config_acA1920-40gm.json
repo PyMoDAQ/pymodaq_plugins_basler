@@ -8,7 +8,7 @@
         "type": "group",
         "children": {
             "Exposure Auto": {"title": "Exposure Auto", "name": "ExposureAuto", "type": "led_push", "default": false},
-            "Exposure Time": {"title": "Exposure Time (ms)", "name": "ExposureTimeRaw", "type": "int", "value": 100.0, "default": 100.0, "limits": [0.0, 10000.0]}
+            "Exposure Time": {"title": "Exposure Time (ms)", "name": "ExposureTimeRaw", "type": "float", "value": 100.0, "default": 100.0, "limits": [0.0, 10000.0]}
         }
     },
 
@@ -18,7 +18,7 @@
         "type": "group",
         "children": {
             "Gain Auto": {"title": "Gain Auto", "name": "GainAuto", "type": "led_push", "default": false},
-            "Gain": {"title": "Gain Value", "name": "GainRaw", "type": "int", "value": 1.0, "default": 1.0, "limits": [0.0, 2.0]}
+            "Gain": {"title": "Gain Value", "name": "GainRaw", "type": "slide", "value": 1.0, "default": 1.0, "limits": [0.0, 2.0], "int": true}
         }
     },
 
@@ -34,7 +34,7 @@
                 "type": "group",
                 "children": {
                     "Save On Trigger": {"title": "Save on Trigger ?", "name": "TriggerSave", "type": "led_push", "value": false},
-                    "Save Location": {"title": "Save Location", "name": "TriggerSaveLocation", "type": "str", "value": ""},
+                    "Save Location": {"title": "Save Location:", "name": "TriggerSaveLocation", "type": "browsepath", "value": "", "filetype": false},
                     "Save Index": {"title": "Save Index", "name": "TriggerSaveIndex", "type": "int", "value": 0},
                     "Image Filetype": {"title": "Image Filetype", "name": "Filetype", "type": "list", "value": "tiff", "limits": ["h5", "tiff", "png", "jpeg"]},
                     "Image File Prefix": {"title": "Image File Prefix", "name": "Prefix", "type": "str", "value": "tir"}

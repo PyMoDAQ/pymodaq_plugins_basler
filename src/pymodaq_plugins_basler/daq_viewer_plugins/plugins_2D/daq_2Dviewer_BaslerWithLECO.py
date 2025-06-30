@@ -10,6 +10,8 @@ from pymodaq.utils.data import Axis, DataFromPlugins, DataToExport
 from pymodaq.utils.daq_utils import ThreadCommand
 from pymodaq.control_modules.viewer_utility_classes import main, DAQ_Viewer_base, comon_parameters, params
 
+from typing import Optional
+
 
 # Suppress only NumPy RuntimeWarnings (bc of crosshair bug)
 import warnings
@@ -45,12 +47,15 @@ class DAQ_2DViewer_BaslerWithLECO(DAQ_Viewer_base):
             {'title': 'Image Height', 'name': 'height', 'type': 'int', 'value': 960, 'readonly': True},
         ]},
         {'title': 'LECO Logging', 'name': 'leco_log', 'type': 'group', 'children': [
-            {'title': 'Send Frame Data ?', 'name': 'leco_send', 'type': 'led_push', 'value': False, 'default': False}, # This leads to huge performance drop as of now. Only use for single grabs, not continous
+            {'title': 'Send Frame Data ?', 'name': 'leco_send', 'type': 'led_push', 'value': False, 'default': False,
+                'tip': 'This leads to huge performance drop as of now. Only use for single grabs, not continuous'},
             {'title': 'Publisher Name', 'name': 'publisher_name', 'type': 'str', 'value': ''},
-            {'title': 'Proxy Server Address', 'name': 'proxy_address', 'type': 'str', 'value': 'localhost', 'default': 'localhost'}, # Either IP or hostname of LECO proxy server
+            {'title': 'Proxy Server Address', 'name': 'proxy_address', 'type': 'str', 'value': 'localhost', 'default': 'localhost',
+                'tip': 'Either IP or hostname of LECO proxy server'},
             {'title': 'Proxy Server Port', 'name': 'proxy_port', 'type': 'int', 'value': 11100, 'default': 11100},
             {'title': 'Metadata', 'name': 'leco_metadata', 'type': 'str', 'value': '', 'readonly': True},
-            {'title': 'Saving Base Path', 'name': 'leco_basepath', 'type': 'str', 'value': ''}, # This is the base directory for a file path sent from a remote director in the metadata
+            {'title': 'Saving Base Path:', 'name': 'leco_basepath', 'type': 'browsepath', 'value': '', 'filetype': False,
+                'tip': 'This is the base directory for a file path sent from a remote director in the metadata'},
         ]}
         ]
 
@@ -417,6 +422,46 @@ class DAQ_2DViewer_BaslerWithLECO(DAQ_Viewer_base):
         self.dte_signal.emit(dte)
 
         # Now, handle data saving with filepath given by user in trigger save settings or from metadata set remotely with LECO
+        self.handle_metadata_and_saving(frame, timestamp, shape)
+
+        # Prepare for next frame
+        self.metadata = None
+        self.controller.imageEventHandler.frame_ready = False
+
+    def handle_metadata_and_saving(self, frame, timestamp, shape):
+        metadata = self.get_metadata_and_save(frame, timestamp, shape)
+        if self.send_frame_leco:
+            self.publish_metadata(metadata, frame)
+        else:
+            self.publish_metadata(metadata)
+
+    def stop(self):
+        self.controller.camera.StopGrabbing()
+        return ''
+    
+    def close(self):
+        """Terminate the communication protocol"""
+        self.controller.attributes = None
+        self.controller.close()
+            
+        # Stop any background threads
+        self.stop_temp_monitoring()
+
+        # Make sure we set these to false if camera disconnected
+        param = self.settings.child('trigger', 'TriggerMode')
+        param.setValue(False) # Turn off save on trigger if triggering is off
+        param.sigValueChanged.emit(param, False)
+        param = self.settings.child('trigger', 'TriggerSaveOptions', 'TriggerSave')
+        param.setValue(False) # Turn off save on trigger if triggering is off
+        param.sigValueChanged.emit(param, False) 
+
+        self.status.initialized = False
+        self.status.controller = None
+        self.status.info = ""
+        print(f"{self.user_id} communication terminated successfully")
+        self.emit_status(ThreadCommand('Update_Status', [f"{self.user_id} communication terminated successfully"]))
+
+    def get_metadata_and_save(self, frame, timestamp, shape):
         if not self.save_frame:
             if self.metadata is not None:
                 metadata = self.metadata
@@ -504,8 +549,9 @@ class DAQ_2DViewer_BaslerWithLECO(DAQ_Viewer_base):
                 full_path = os.path.join(filepath, f"{filename}.{filetype}")
                 os.makedirs(os.path.dirname(full_path), exist_ok=True)
                 iio.imwrite(full_path, frame)
+        return metadata
 
-        # Finally, handle publishing with LECO, including frame raw data if enabled, to log frame saved event
+    def publish_metadata(self, metadata, frame: Optional[np.ndarray] = None):
         if self.data_publisher is not None and self.save_frame:
             if self.send_frame_leco:                        
                 self.data_publisher.send_data2({self.settings.child('leco_log', 'publisher_name').value(): 
@@ -519,36 +565,6 @@ class DAQ_2DViewer_BaslerWithLECO(DAQ_Viewer_base):
                                                  'message_type': 'detector',
                                                  'serial_number': self.controller.device_info.GetSerialNumber(),
                                                  'format_version': 'hdf5-v0.1'}})
-
-        # Prepare for next frame
-        self.metadata = None
-        self.controller.imageEventHandler.frame_ready = False
-
-    def stop(self):
-        self.controller.camera.StopGrabbing()
-        return ''
-    
-    def close(self):
-        """Terminate the communication protocol"""
-        self.controller.attributes = None
-        self.controller.close()
-            
-        # Stop any background threads
-        self.stop_temp_monitoring()
-
-        # Make sure we set these to false if camera disconnected
-        param = self.settings.child('trigger', 'TriggerMode')
-        param.setValue(False) # Turn off save on trigger if triggering is off
-        param.sigValueChanged.emit(param, False)
-        param = self.settings.child('trigger', 'TriggerSaveOptions', 'TriggerSave')
-        param.setValue(False) # Turn off save on trigger if triggering is off
-        param.sigValueChanged.emit(param, False) 
-
-        self.status.initialized = False
-        self.status.controller = None
-        self.status.info = ""
-        print(f"{self.user_id} communication terminated successfully")
-        self.emit_status(ThreadCommand('Update_Status', [f"{self.user_id} communication terminated successfully"]))
     
     def roi_select(self, roi_info, ind_viewer):
         self.roi_info = roi_info

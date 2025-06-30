@@ -106,9 +106,12 @@ class BaslerCamera:
 
         file_path = os.path.join(base_dir, f'config_{name}.json')
 
-        with open(file_path, 'r') as file:
-            attributes = json.load(file)
-            self.attributes = self.clean_device_attributes(attributes)
+        try:        
+            with open(file_path, 'r') as file:
+                attributes = json.load(file)
+                self.attributes = self.clean_device_attributes(attributes)
+        except Exception as e:
+            log.error(f"The config file was not found at {file_path}: ", e, " Make sure to add it !")
 
 
     def get_roi(self) -> Tuple[float, float, float, float, int, int]:
