@@ -39,6 +39,12 @@ class DAQ_2DViewer_BaslerWithLECO(DAQ_Viewer_base):
 
     # Update the params
     params = comon_parameters + [{'title': 'Camera List:', 'name': 'camera_list', 'type': 'list', 'value': '', 'limits': camera_list},
+        {"title": "Device Info", "name": "device_info", "type": "group", "children": [
+            {"title": "Device Model Name", "name": "DeviceModelName", "type": "str", "value": "", "readonly": True},
+            {"title": "Device Serial Number", "name": "DeviceSerialNumber", "type": "str", "value": "", "readonly": True},
+            {"title": "Device Version", "name": "DeviceVersion", "type": "str", "value": "", "readonly": True},
+            {"title": "Device User ID", "name": "DeviceUserID", "type": "str", "value": ""}
+        ]},                                 
         {'title': 'ROI', 'name': 'roi', 'type': 'group', 'children': [
             {'title': 'Update ROI', 'name': 'update_roi', 'type': 'bool_push', 'value': False, 'default': False},
             {'title': 'Clear ROI+Bin', 'name': 'clear_roi', 'type': 'bool_push', 'value': False, 'default': False},
