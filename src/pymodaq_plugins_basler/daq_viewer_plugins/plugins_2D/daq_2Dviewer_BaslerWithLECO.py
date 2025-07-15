@@ -468,31 +468,7 @@ class DAQ_2DViewer_BaslerWithLECO(DAQ_Viewer_base):
         self.emit_status(ThreadCommand('Update_Status', [f"{self.user_id} communication terminated successfully"]))
 
     def get_metadata_and_save(self, frame, timestamp, shape):
-        if not self.save_frame:
-            if self.metadata is not None:
-                metadata = self.metadata
-                metadata['burst_metadata']['user_id'] = self.user_id
-            else:
-                metadata = {'burst_metadata':{}, 'file_metadata': {}, 'detector_metadata': {}}
-                metadata['burst_metadata']['uuid'] = str(uuid7())
-                metadata['burst_metadata']['user_id'] = self.user_id
-                metadata['burst_metadata']['timestamp'] = timestamp
-            # Include device metadata to send back
-            # Account for some uncertainty in timestamp of frame, assume ~100 us for now
-            metadata['detector_metadata']['fuzziness'] = 0.1
-            count = 0
-            for name in self.controller.attribute_names:
-                if 'Gain' in name and 'Auto' not in name:
-                    metadata['detector_metadata']['gain'] = self.settings.child('gain', name).value()
-                    count += 1
-                if 'Exposure' in name and 'Auto' not in name:
-                    metadata['detector_metadata']['exposure_time'] = self.settings.child('exposure', name).value()
-                    count += 1
-                if count == 2:
-                    break
-            metadata['detector_metadata']['shape'] = shape
-        
-        elif self.save_frame:
+        if self.save_frame:
             index = self.settings.child('trigger', 'TriggerSaveOptions', 'TriggerSaveIndex')
             filetype = self.settings.child('trigger', 'TriggerSaveOptions', 'Filetype').value()
             if self.metadata is not None:
