@@ -428,13 +428,16 @@ class DAQ_2DViewer_BaslerWithLECO(DAQ_Viewer_base):
         self.dte_signal.emit(dte)
 
         # Now, handle data saving with filepath given by user in trigger save settings or from metadata set remotely with LECO
-        self.handle_metadata_and_saving(frame, timestamp, shape)
+        if self.save_frame:
+            self.handle_metadata_and_saving(frame, timestamp, shape)
 
         # Prepare for next frame
         self.metadata = None
         self.controller.imageEventHandler.frame_ready = False
 
     def handle_metadata_and_saving(self, frame, timestamp, shape):
+        if not self.settings.child('trigger', 'TriggerMode').value():
+            return
         metadata = self.get_metadata_and_save(frame, timestamp, shape)
         if self.send_frame_leco:
             self.publish_metadata(metadata, frame)
