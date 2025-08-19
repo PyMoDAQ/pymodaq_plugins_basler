@@ -151,13 +151,16 @@ class BaslerCamera:
         return self.attributes[name]
 
     def setup_acquisition(self):
-        self.camera.TriggerSelector.SetValue("AcquisitionStart")
-        self.camera.TriggerMode.SetValue("Off")
-        self.camera.TriggerSelector.SetValue("FrameStart")
-        self.camera.TriggerMode.SetValue("Off")
-        self.camera.AcquisitionFrameRateEnable.SetValue(False)
-        self.camera.AcquisitionMode.SetValue("Continuous")
-        self.camera.AcquisitionFrameRateEnable.SetValue(True)
+        try:
+            self.camera.TriggerSelector.SetValue("AcquisitionStart")
+            self.camera.TriggerMode.SetValue("Off")
+            self.camera.TriggerSelector.SetValue("FrameStart")
+            self.camera.TriggerMode.SetValue("Off")
+            self.camera.AcquisitionFrameRateEnable.SetValue(False)
+            self.camera.AcquisitionMode.SetValue("Continuous")
+            self.camera.AcquisitionFrameRateEnable.SetValue(True)
+        except Exception:
+            pass # no trigger settings
 
     def close(self) -> None:
         self.camera.Close()
@@ -168,10 +171,11 @@ class BaslerCamera:
 
         Whenever a grab succeeded, the callback defined in :meth:`set_callback` is called.
         """
-        try:
-            self.camera.AcquisitionFrameRate.SetValue(frame_rate)
-        except pylon.LogicalErrorException:
-            pass
+        if frame_rate is not None:
+            try:
+                self.camera.AcquisitionFrameRate.SetValue(frame_rate)
+            except pylon.LogicalErrorException:
+                pass
         self.camera.StartGrabbing(
             pylon.GrabStrategy_LatestImageOnly, pylon.GrabLoop_ProvidedByInstantCamera
         )

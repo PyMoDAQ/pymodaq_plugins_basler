@@ -341,10 +341,14 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
     def grab_data(self, Naverage: int = 1, live: bool = False, **kwargs) -> None:
         try:
             self._prepare_view()
-            if live:
-                self.controller.start_grabbing(self.settings.param('AcquisitionFrameRateAbs').value())
+            if "Acquisition Frame Rate" in self.controller.attributes:
+                frame_rate = self.settings.param('AcquisitionFrameRateAbs').value()
             else:
-                self.controller.start_grabbing(self.settings.param('AcquisitionFrameRateAbs').value())
+                frame_rate = None
+            if live:
+                self.controller.start_grabbing(frame_rate)
+            else:
+                self.controller.start_grabbing(frame_rate)
                 while not self.controller.imageEventHandler.frame_ready:
                     pass # do nothing until a frame is ready
                 self.controller.stop_grabbing()
@@ -359,7 +363,7 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
         dte = DataToExport(f'{self.user_id}', data=[DataFromPlugins(
             name=f'{self.user_id}',
             data=[np.squeeze(frame)],
-            dim=shape,
+            dim=self.data_shape,
             labels=[f'{self.user_id}_{self.data_shape}'],
             axes=self.axes)])
         self.dte_signal.emit(dte)
@@ -398,15 +402,21 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
         self.controller.close()
             
         # Stop any background threads
-        self.stop_temp_monitoring()
+        try:
+            self.stop_temp_monitoring()
+        except Exception:
+            pass # no temp settings
 
         # Just set these to false if camera disconnected for clean GUI
-        param = self.settings.child('trigger', 'TriggerMode')
-        param.setValue(False) # Turn off save on trigger if triggering is off
-        param.sigValueChanged.emit(param, False)
-        param = self.settings.child('trigger', 'TriggerSaveOptions', 'TriggerSave')
-        param.setValue(False) # Turn off save on trigger if triggering is off
-        param.sigValueChanged.emit(param, False) 
+        try:
+            param = self.settings.child('trigger', 'TriggerMode')
+            param.setValue(False) # Turn off save on trigger if triggering is off
+            param.sigValueChanged.emit(param, False)
+            param = self.settings.child('trigger', 'TriggerSaveOptions', 'TriggerSave')
+            param.setValue(False) # Turn off save on trigger if triggering is off
+            param.sigValueChanged.emit(param, False) 
+        except Exception:
+            pass # no trigger settings
 
         self.status.initialized = False
         self.status.controller = None

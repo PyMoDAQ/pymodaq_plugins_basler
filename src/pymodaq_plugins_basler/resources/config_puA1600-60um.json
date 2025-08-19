@@ -1,0 +1,43 @@
+{
+    "exposure": {
+        "title": "Exposure Settings",
+        "name": "exposure", 
+        "type": "group",
+        "children": {
+            "Exposure Auto": {"title": "Exposure Auto", "name": "ExposureAuto", "type": "led_push", "default": false},
+            "Exposure Time": {"title": "Exposure Time (ms)", "name": "ExposureTime", "type": "float", "value": 100.0, "default": 100.0, "limits": [0.0, 10000.0]}
+        }
+    },
+
+    "gain": {
+        "title": "Gain Settings",
+        "name": "gain", 
+        "type": "group",
+        "children": {
+            "Gain Auto": {"title": "Gain Auto", "name": "GainAuto", "type": "led_push", "default": false},
+            "Gain": {"title": "Gain Value", "name": "Gain", "type": "slide", "value": 1.0, "default": 1.0, "limits": [0.0, 2.0], "int": true}
+        }
+    },
+
+    "misc": {
+        "title": "Additional Settings",
+        "name": "misc", 
+        "type": "group",
+        "children": {
+            "Pixel Format": {"title": "Pixel Format", "name": "PixelFormat", "type": "list", "value": "Mono12", "limits": ["Mono8", "Mono12"]},
+            "Gamma": {"title": "Gamma", "name": "Gamma", "type": "slide", "value": 1.0, "default": 1.0, "limits": [0.0, 2.0]},
+            "Brightness": {"title": "Brightness", "name": "BslBrightness", "type": "slide", "value": 1.0, "default": 1.0, "limits": [0.0, 2.0]},
+            "Contrast": {"title": "Contrast", "name": "BslContrast", "type": "slide", "value": 1.0, "default": 1.0, "limits": [0.0, 2.0]}
+            }
+    },
+
+    "device_state": {
+        "title": "Device State",
+        "name": "device_state", 
+        "type": "group",
+        "children": {
+            "device_state_save": {"title": "Save Device State ?", "name": "device_state_save", "type": "bool_push", "value": false},
+            "device_state_load": {"title": "Load Device State ?", "name": "device_state_load", "type": "bool_push", "value": false}
+        }
+    }
+}
