@@ -531,7 +531,7 @@ class DAQ_2DViewer_BaslerWithLECO(DAQ_Viewer_base):
                     print(f"Unsupported file type {filetype} for saving frame. Supported types are: png, jpg, jpeg, tiff, tif, h5")
                     self.emit_status(ThreadCommand('Update_Status', [f"Unsupported file type {filetype} for saving frame. Supported types are: png, jpg, jpeg, tiff, tif, h5"]))
                     return
-                full_path = os.path.join(filepath, f"{filename}.{filetype}")
+                full_path = os.path.join(filepath, f"{filename}")
                 os.makedirs(os.path.dirname(full_path), exist_ok=True)
                 iio.imwrite(full_path, frame)
         return metadata
