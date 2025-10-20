@@ -9,12 +9,33 @@ from pypylon import pylon
 from qtpy import QtCore, QtWidgets
 import json
 import os
+import sys
 
 if not hasattr(QtCore, "pyqtSignal"):
     QtCore.pyqtSignal = QtCore.Signal  # type: ignore
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
+
+if sys.platform.startswith("win"):
+    import ctypes
+    MB_YESNO = 0x04
+    MB_ICONQUESTION = 0x20
+    MB_OK = 0x00
+    MB_ICONINFORMATION = 0x40
+    MB_ICONERROR = 0x10
+    IDYES = 6
+    IDNO = 7
+    IDOK = 1
+
+    def _win_message_box(title, text, buttons="yesno", icon="info"):
+        icon_map = {"info": MB_ICONINFORMATION, "question": MB_ICONQUESTION, "error": MB_ICONERROR}
+        flags = icon_map.get(icon, MB_ICONINFORMATION)
+        if buttons == "yesno":
+            flags |= MB_YESNO
+        else:
+            flags |= MB_OK
+        return ctypes.windll.user32.MessageBoxW(0, text, title, flags)
 
 
 class BaslerCamera:
@@ -358,22 +379,23 @@ class BaslerCamera:
                 msg_info.setWindowTitle("Config Created")
                 msg_info.setText(f"Default config file created for '{model_name}'.")
                 msg_info.setInformativeText(f"Path:\n{config_path}\n\nYou can edit this file to add/remove parameters.")
-                self.safe_exec_messagebox(msg_info)
+                self.safe_exec_messagebox(msg_info, buttons="ok")
+                
             except Exception as e:
                 msg_err = QtWidgets.QMessageBox()
                 msg_err.setIcon(QtWidgets.QMessageBox.Critical)
                 msg_err.setWindowTitle("Error Creating Config")
                 msg_err.setText(f"Failed to write default config file:\n{e}")
-                self.safe_exec_messagebox(msg_err)
+                self.safe_exec_messagebox(msg_err, buttons="ok")
         else:
             msg_info = QtWidgets.QMessageBox()
             msg_info.setIcon(QtWidgets.QMessageBox.Information)
             msg_info.setWindowTitle("Config Not Created")
             msg_info.setText(f"You have chosen not to create a default config file for Basler '{model_name}'.")
             msg_info.setInformativeText(f"You will not have access to camera parameters until you have a valid config file.\n\nYou can find examples of config files in the resources directory of this package or reinitialize and create a default.")
-            self.safe_exec_messagebox(msg_info)
+            self.safe_exec_messagebox(msg_info, buttons="ok")
 
-    def safe_exec_messagebox(self, msgbox) -> int:
+    def safe_exec_messagebox(self, msgbox: QtWidgets.QMessageBox, buttons: str = "yesno") -> int:
         result_container = {}
         finished_event = threading.Event()
 
@@ -388,21 +410,48 @@ class BaslerCamera:
         if self._msg_opener is None:
             self._msg_opener = DefaultConfigMsg()
 
-        QtCore.QMetaObject.invokeMethod(
-            self._msg_opener,
-            "run_box",
-            QtCore.Qt.ConnectionType.AutoConnection,
-            QtCore.Q_ARG(object, show_dialog)
-        )
+        # Non-GUI thread (Windows only safe path)
+        if sys.platform.startswith("win"):
+            title = str(msgbox.windowTitle() or "PyMoDAQ")
+            text = str(msgbox.text() or "")
+            informative = msgbox.informativeText()
+            if informative:
+                text += "\n\n" + str(informative)
 
-        if QtCore.QThread.currentThread() != QtWidgets.QApplication.instance().thread():
-            finished_event.wait()
-            QtCore.QTimer.singleShot(0, QtWidgets.QApplication.processEvents)
+            try:
+                icon_type = "info"
+                if msgbox.icon() == QtWidgets.QMessageBox.Question:
+                    icon_type = "question"
+                elif msgbox.icon() == QtWidgets.QMessageBox.Critical:
+                    icon_type = "error"
+
+                res = _win_message_box(title, text, buttons=buttons, icon=icon_type)
+
+                if buttons == "yesno":
+                    if res == IDYES:
+                        return int(QtWidgets.QMessageBox.Yes)
+                    return int(QtWidgets.QMessageBox.No)
+                else:
+                    return int(QtWidgets.QMessageBox.Ok)
+
+            except Exception:
+                return int(QtWidgets.QMessageBox.No)
         else:
-            while not finished_event.is_set():
-                QtWidgets.QApplication.processEvents(QtCore.QEventLoop.AllEvents, 50)
+            QtCore.QMetaObject.invokeMethod(
+                self._msg_opener,
+                "run_box",
+                QtCore.Qt.ConnectionType.AutoConnection,
+                QtCore.Q_ARG(object, show_dialog)
+            )
 
-        return result_container.get("choice", int(QtWidgets.QMessageBox.No))
+            if QtCore.QThread.currentThread() != QtWidgets.QApplication.instance().thread():
+                finished_event.wait()
+                QtCore.QTimer.singleShot(0, QtWidgets.QApplication.processEvents)
+            else:
+                while not finished_event.is_set():
+                    QtWidgets.QApplication.processEvents(QtCore.QEventLoop.AllEvents, 50)
+
+            return result_container.get("choice", int(QtWidgets.QMessageBox.No))
     
 class DefaultConfigMsg(QtCore.QObject):
     def __init__(self):
