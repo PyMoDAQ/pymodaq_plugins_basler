@@ -1,18 +1,20 @@
 import logging
 from typing import Any, Callable, List, Optional, Tuple, Union
 import platform
+import traceback
+import threading
 
 from numpy.typing import NDArray
 from pypylon import pylon
-from qtpy import QtCore
+from qtpy import QtCore, QtWidgets
 import json
 import os
 
 if not hasattr(QtCore, "pyqtSignal"):
     QtCore.pyqtSignal = QtCore.Signal  # type: ignore
 
-log = logging.getLogger(__name__)
-log.addHandler(logging.NullHandler())
+logger = logging.getLogger(__name__)
+logger.addHandler(logging.NullHandler())
 
 
 class BaslerCamera:
@@ -34,16 +36,16 @@ class BaslerCamera:
         self.camera = pylon.InstantCamera()
         self.model_name = info.GetModelName()
         self.device_info = info
+        self._msg_opener = None
 
-        # Default place to look for saved device configuration
+        # Default directory for parameter config files
         if platform.system() == 'Windows':
-            self.default_device_state_path = os.path.join(
-                os.environ.get('PROGRAMDATA'), '.pymodaq', f'{self.model_name}_config.pfs'
-            )
+            self.base_dir = os.path.join(os.environ.get('PROGRAMDATA'), '.pymodaq')
         else:
-            self.default_device_state_path = os.path.join(
-                '/etc', '.pymodaq', f'{self.model_name}_config.pfs'
-            )
+            self.base_dir = '/etc/.pymodaq'        
+
+        # Default place to look for saved device state configuration
+        self.default_device_state_path = os.path.join(self.base_dir, f'{self.model_name}_config.pfs')
 
         # register configuration event handler
         self.configurationEventHandler = ConfigurationHandler()
@@ -68,7 +70,13 @@ class BaslerCamera:
     def open(self) -> None:
         device = self.tlFactory.CreateDevice(self.device_info.GetFullName())
         self.camera.Attach(device)
-        self.camera.Open()
+        try:
+            self.camera.Open()
+        except Exception as e:
+            traceback.print_exc()
+            print(f"[BaslerCamera] Failed to open camera: {e}")
+            raise
+        self.create_default_config_if_not_exists()
         self.get_attributes()
         self.attribute_names = [attr['name'] for attr in self.attributes] + [child['name'] for attr in self.attributes if attr.get('type') == 'group' for child in attr.get('children', [])]
 
@@ -99,19 +107,14 @@ class BaslerCamera:
         """Get the attributes of the camera and store them in a dictionary."""
         name = self.model_name.replace(" ", "-")
 
-        if platform.system() == 'Windows':
-            base_dir = os.path.join(os.environ.get('PROGRAMDATA'), '.pymodaq')
-        else:
-            base_dir = '/etc/.pymodaq'
-
-        file_path = os.path.join(base_dir, f'config_{name}.json')
+        file_path = os.path.join(self.base_dir, f'config_{name}.json')
 
         try:        
             with open(file_path, 'r') as file:
                 attributes = json.load(file)
                 self.attributes = self.clean_device_attributes(attributes)
         except Exception as e:
-            log.error(f"The config file was not found at {file_path}: ", e, " Make sure to add it !")
+            logger.error(f"The config file was not found at {file_path}: ", e, " Make sure to add it !")
 
 
     def get_roi(self) -> Tuple[float, float, float, float, int, int]:
@@ -159,8 +162,8 @@ class BaslerCamera:
             self.camera.AcquisitionFrameRateEnable.SetValue(False)
             self.camera.AcquisitionMode.SetValue("Continuous")
             self.camera.AcquisitionFrameRateEnable.SetValue(True)
-        except Exception:
-            pass # no trigger settings
+        except Exception as e:
+            logger.error(f"Could not properly setup acquisition for live grabbing.", e)
 
     def close(self) -> None:
         self.camera.Close()
@@ -239,6 +242,174 @@ class BaslerCamera:
             clean_params.append(param)
 
         return clean_params
+    
+    def check_attribute_names(self):
+        found_exposure = None
+        found_gain = None
+
+        possible_exposures = ["ExposureTime", "ExposureTimeAbs", "ExposureTimeRaw"]
+        for exp in possible_exposures:
+            try:
+                if hasattr(self.camera, exp):
+                    found_exposure = exp
+                    break
+            except pylon.LogicalErrorException:
+                pass
+
+        possible_gains = ["Gain", "GainRaw", "GainAll"]
+        raw_gain = False
+        for gain in possible_gains:
+            try:
+                if hasattr(self.camera, gain):
+                    found_gain = gain
+
+                    if gain == "GainRaw":
+                        raw_gain = True
+                    break
+            except pylon.LogicalErrorException:
+                pass
+
+        found_exposure = found_exposure or "ExposureTime"
+        found_gain = found_gain or "Gain"
+
+        return found_exposure, found_gain, raw_gain
+
+    
+    def create_default_config_if_not_exists(self):
+        model_name = self.model_name.replace(" ", "-")
+        config_dir = self.base_dir
+        os.makedirs(config_dir, exist_ok=True)
+        config_path = os.path.join(config_dir, f'config_{model_name}.json')
+        if os.path.exists(config_path):
+            return
+        else:
+            self._msg_opener = DefaultConfigMsg()
+            msg = QtWidgets.QMessageBox()
+            msg.setIcon(QtWidgets.QMessageBox.Question)
+            msg.setWindowTitle("Missing Config File")
+            msg.setText(f"No config file found for camera model '{model_name}'.")
+            msg.setInformativeText("Would you like to auto-create a default configuration file?")
+            msg.setStandardButtons(QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No)
+            msg.setDefaultButton(QtWidgets.QMessageBox.Yes)
+            QtCore.QTimer.singleShot(0, QtWidgets.QApplication.processEvents)
+            user_choice = self.safe_exec_messagebox(msg)
+            self.handle_user_choice(user_choice, config_path, model_name)
+
+    def handle_user_choice(self, user_choice, config_path, model_name):
+
+        if user_choice == QtWidgets.QMessageBox.Yes:
+            # Try to detect valid exposure/gain names
+            found_exposure, found_gain, raw_gain = self.check_attribute_names()
+
+            # Build basic config
+            config_data = {
+                "exposure": {
+                    "title": "Exposure Settings",
+                    "name": "exposure",
+                    "type": "group",
+                    "children": {
+                        "Exposure Auto": {
+                            "title": "Exposure Auto",
+                            "name": "ExposureAuto",
+                            "type": "led_push",
+                            "value": False,
+                            "default": False
+                        },
+                        "Exposure Time": {
+                            "title": "Exposure Time (ms)",
+                            "name": found_exposure,
+                            "type": "slide",
+                            "value": 100.0,
+                            "default": 100.0,
+                            "limits": [0.001, 10000.0]
+                        }
+                    }
+                },
+                "gain": {
+                    "title": "Gain Settings",
+                    "name": "gain",
+                    "type": "group",
+                    "children": {
+                        "Gain Auto": {
+                            "title": "Gain Auto",
+                            "name": "GainAuto",
+                            "type": "led_push",
+                            "value": False,
+                            "default": False
+                        },
+                        "Gain": {
+                            "title": "Gain Value",
+                            "name": found_gain,
+                            "type": "slide",
+                            "value": 1.0,
+                            "default": 1.0,
+                            "limits": [0.0, 2.0],
+                            "int": raw_gain
+                        }
+                    }
+                }
+            }
+            try:
+                print(f"Creating default config for {model_name} at {config_path}")
+                with open(config_path, "w") as f:
+                    json.dump(config_data, f, indent=4)
+                msg_info = QtWidgets.QMessageBox()
+                msg_info.setIcon(QtWidgets.QMessageBox.Information)
+                msg_info.setWindowTitle("Config Created")
+                msg_info.setText(f"Default config file created for '{model_name}'.")
+                msg_info.setInformativeText(f"Path:\n{config_path}\n\nYou can edit this file to add/remove parameters.")
+                self.safe_exec_messagebox(msg_info)
+            except Exception as e:
+                msg_err = QtWidgets.QMessageBox()
+                msg_err.setIcon(QtWidgets.QMessageBox.Critical)
+                msg_err.setWindowTitle("Error Creating Config")
+                msg_err.setText(f"Failed to write default config file:\n{e}")
+                self.safe_exec_messagebox(msg_err)
+        else:
+            msg_info = QtWidgets.QMessageBox()
+            msg_info.setIcon(QtWidgets.QMessageBox.Information)
+            msg_info.setWindowTitle("Config Not Created")
+            msg_info.setText(f"You have chosen not to create a default config file for Basler '{model_name}'.")
+            msg_info.setInformativeText(f"You will not have access to camera parameters until you have a valid config file.\n\nYou can find examples of config files in the resources directory of this package or reinitialize and create a default.")
+            self.safe_exec_messagebox(msg_info)
+
+    def safe_exec_messagebox(self, msgbox) -> int:
+        result_container = {}
+        finished_event = threading.Event()
+
+        def show_dialog():
+            try:
+                result_container["choice"] = int(msgbox.exec_())
+            except Exception:
+                result_container["choice"] = int(QtWidgets.QMessageBox.No)
+            finally:
+                finished_event.set()
+
+        if self._msg_opener is None:
+            self._msg_opener = DefaultConfigMsg()
+
+        QtCore.QMetaObject.invokeMethod(
+            self._msg_opener,
+            "run_box",
+            QtCore.Qt.ConnectionType.AutoConnection,
+            QtCore.Q_ARG(object, show_dialog)
+        )
+
+        if QtCore.QThread.currentThread() != QtWidgets.QApplication.instance().thread():
+            finished_event.wait()
+            QtCore.QTimer.singleShot(0, QtWidgets.QApplication.processEvents)
+        else:
+            while not finished_event.is_set():
+                QtWidgets.QApplication.processEvents(QtCore.QEventLoop.AllEvents, 50)
+
+        return result_container.get("choice", int(QtWidgets.QMessageBox.No))
+    
+class DefaultConfigMsg(QtCore.QObject):
+    def __init__(self):
+        super().__init__()
+    @QtCore.Slot(object)
+    def run_box(self, fn):
+        fn()
 
 class ConfigurationHandler(pylon.ConfigurationEventHandler):
     """Handle the configuration events."""
@@ -254,7 +425,10 @@ class ConfigurationHandler(pylon.ConfigurationEventHandler):
 
     def OnOpened(self, camera: pylon.InstantCamera) -> None:
         """Standard configuration after being opened."""
-        camera.PixelFormat.SetValue("Mono12")
+        try:
+            camera.PixelFormat.SetValue("Mono12")
+        except Exception:
+            pass
         camera.GainAuto.SetValue("Off")
         camera.ExposureAuto.SetValue("Off")
 
@@ -278,7 +452,7 @@ class ImageEventHandler(pylon.ImageEventHandler):
 
     def OnImageSkipped(self, camera: pylon.InstantCamera, countOfSkippedImages: int) -> None:
         """Handle a skipped image."""
-        log.warning(f"{countOfSkippedImages} images have been skipped.")
+        logger.warning(f"{countOfSkippedImages} images have been skipped.")
 
     def OnImageGrabbed(self, camera: pylon.InstantCamera, grabResult: pylon.GrabResult) -> None:
         """Process a grabbed image."""
@@ -287,13 +461,12 @@ class ImageEventHandler(pylon.ImageEventHandler):
             frame_data = {"frame": grabResult.GetArray(), "timestamp": grabResult.GetTimeStamp()}
             self.signals.imageGrabbed.emit(frame_data)
         else:
-            log.warning(
+            logger.warning(
                 (
                     f"Grab failed with code {grabResult.GetErrorCode()}, "
                     f"{grabResult.GetErrorDescription()}."
                 )
             )
-
 
 class TemperatureMonitor(QtCore.QObject):
     temperature_updated = QtCore.pyqtSignal(float)

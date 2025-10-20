@@ -1,9 +1,6 @@
 import numpy as np
 import os
 import imageio as iio
-import h5py
-import json
-from uuid6 import uuid7
 
 from pymodaq.utils.parameter import Parameter
 from pymodaq.utils.data import Axis, DataFromPlugins, DataToExport
