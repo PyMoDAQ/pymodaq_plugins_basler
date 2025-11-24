@@ -59,4 +59,5 @@ Installation instructions
 =========================
 
 * You need the manufacturer's driver `Pylon <https://www.baslerweb.com/pylon>`_ for the cameras.
+* Here are `complete installation instructions <https://pymodaq.cnrs.fr/en/latest/lab_story_folder/basler.html>`_.
 
