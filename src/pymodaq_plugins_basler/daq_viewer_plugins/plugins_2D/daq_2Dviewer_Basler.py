@@ -211,14 +211,14 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
             if name == 'GainAuto':
                 camera_attr = getattr(self.controller.camera, name)
                 if value:
-                    camera_attr.SetIntValue(1)
+                    camera_attr.SetIntValue(2)
                 else:
                     camera_attr.SetIntValue(0)
                 return
             if name == 'ExposureAuto':
                 camera_attr = getattr(self.controller.camera, name)
                 if value:
-                    camera_attr.SetIntValue(1)
+                    camera_attr.SetIntValue(2)
                 else:
                     camera_attr.SetIntValue(0)
                 return
@@ -388,6 +388,22 @@ class DAQ_2DViewer_Basler(DAQ_Viewer_base):
 
         # Prepare for next frame
         self.controller.imageEventHandler.frame_ready = False
+
+        # Update exposure and gain in GUI if set to auto
+        exposure_name, gain_name, raw_gain = self.controller.check_attribute_names()
+        if self.settings.child('exposure', 'ExposureAuto').value():
+            camera_attr = getattr(self.controller.camera, exposure_name)
+            value = camera_attr.GetValue()
+            value = int(value * 1e-3)
+            param = self.settings.child('exposure', exposure_name)
+            param.setValue(value)
+            param.sigValueChanged.emit(param, param.value())
+        if self.settings.child('gain', 'GainAuto').value():
+            camera_attr = getattr(self.controller.camera, gain_name)
+            value = camera_attr.GetValue()
+            param = self.settings.child('gain', gain_name)
+            param.setValue(value)
+            param.sigValueChanged.emit(param, param.value())
 
     def stop(self):
         self.controller.camera.StopGrabbing()
