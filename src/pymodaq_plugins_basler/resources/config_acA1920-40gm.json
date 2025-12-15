@@ -1,0 +1,80 @@
+{
+
+    "Acquisition Frame Rate": {"title": "Acquisition Frame Rate", "name": "AcquisitionFrameRateAbs", "type": "slide", "value": 15.0, "default": 15.0, "limits": [1.0, 15.0]},
+
+    "exposure": {
+        "title": "Exposure Settings",
+        "name": "exposure", 
+        "type": "group",
+        "children": {
+            "Exposure Auto": {"title": "Exposure Auto", "name": "ExposureAuto", "type": "led_push", "default": false},
+            "Exposure Time": {"title": "Exposure Time (ms)", "name": "ExposureTimeRaw", "type": "float", "value": 100.0, "default": 100.0, "limits": [0.0, 10000.0]}
+        }
+    },
+
+    "gain": {
+        "title": "Gain Settings",
+        "name": "gain", 
+        "type": "group",
+        "children": {
+            "Gain Auto": {"title": "Gain Auto", "name": "GainAuto", "type": "led_push", "default": false},
+            "Gain": {"title": "Gain Value", "name": "GainRaw", "type": "slide", "value": 1.0, "default": 1.0, "limits": [0.0, 2.0], "int": true}
+        }
+    },
+
+    "trigger": {
+        "title": "Trigger Settings",
+        "name": "trigger", 
+        "type": "group",
+        "children": {
+            "Trigger Mode": {"title": "Trigger Mode", "name": "TriggerMode", "type": "led_push", "value": false},
+            "TriggerSaveOptions": {
+                "title": "Save Options",
+                "name": "TriggerSaveOptions", 
+                "type": "group",
+                "children": {
+                    "Save On Trigger": {"title": "Save on Trigger ?", "name": "TriggerSave", "type": "led_push", "value": false},
+                    "Save Location": {"title": "Save Location:", "name": "TriggerSaveLocation", "type": "browsepath", "value": "", "filetype": false},
+                    "Save Index": {"title": "Save Index", "name": "TriggerSaveIndex", "type": "int", "value": 0},
+                    "Image Filetype": {"title": "Image Filetype", "name": "Filetype", "type": "list", "value": "tiff", "limits": ["h5", "tiff", "png", "jpeg"]},
+                    "Image File Prefix": {"title": "Image File Prefix", "name": "Prefix", "type": "str", "value": "tir"}
+                }
+            },  
+            "Trigger Source": {"title": "Trigger Source", "name": "TriggerSource", "type": "list", "value": "Line1", "limits": ["Line1", "Software", "Action1"]},
+            "Trigger Activation": {"title": "Trigger Activation", "name": "TriggerActivation", "type": "list", "value": "RisingEdge", "limits": ["RisingEdge", "FallingEdge"]},
+            "Trigger Delay": {"title": "Trigger Delay (us)", "name": "TriggerDelayAbs", "type": "float", "value": 100.0, "limits": [0.0, 100.0]}
+        }
+    },
+
+    "misc": {
+        "title": "Additional Settings",
+        "name": "misc", 
+        "type": "group",
+        "children": {
+            "Pixel Format": {"title": "Pixel Format", "name": "PixelFormat", "type": "list", "value": "Mono12", "limits": ["Mono8", "Mono12"]},
+            "GammaEnable": {"title": "Gamma Enable", "name": "GammaEnable", "type": "led_push", "value": false},
+            "Gamma": {"title": "Gamma", "name": "Gamma", "type": "slide", "value": 1.0, "default": 1.0, "limits": [0.0, 2.0]},
+            "Gev SCPS Packet Size": {"title": "Gev SCPS Packet Size", "name": "GevSCPSPacketSize", "type": "int", "value": 3000, "default": 3000, "limits": [0, 6000]}
+        }
+    },
+
+    "temperature": {
+        "title": "Temperature Monitoring",
+        "name": "temperature", 
+        "type": "group",
+        "children": {
+            "TemperatureMonitor": {"title": "Turn on Monitoring", "name": "TemperatureMonitor", "type": "led_push", "value": false},
+            "TemperatureAbs": {"title": "Sensor Temp. (C)", "name": "TemperatureAbs", "type": "float", "value": 1.0, "readonly": true}
+        }
+    },
+
+    "device_state": {
+        "title": "Device State",
+        "name": "device_state", 
+        "type": "group",
+        "children": {
+            "device_state_save": {"title": "Save Device State ?", "name": "device_state_save", "type": "bool_push", "value": false},
+            "device_state_load": {"title": "Load Device State ?", "name": "device_state_load", "type": "bool_push", "value": false}
+        }
+    }
+}

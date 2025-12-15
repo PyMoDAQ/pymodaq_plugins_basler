@@ -15,6 +15,10 @@ dependencies = [
     'pymodaq>=4.4.7',
     'numpy',  # for Basler camera
     'pypylon',
+    'imageio',
+    'uuid6',
+    'pywin32; sys_platform == "win32"',
+    'h5py'
 ]
 
 authors = [
@@ -60,4 +64,5 @@ build-backend = "hatchling.build"
 
 [tool.hatch.version]
 source = "vcs"
+fallback-version = "0.0.1"
 
