@@ -2,7 +2,6 @@ import logging
 from typing import Any, Callable, List, Optional, Tuple, Union
 import platform
 import traceback
-import threading
 
 from numpy.typing import NDArray
 from pypylon import pylon
@@ -24,17 +23,26 @@ if sys.platform.startswith("win"):
     MB_OK = 0x00
     MB_ICONINFORMATION = 0x40
     MB_ICONERROR = 0x10
+    MB_TOPMOST = 0x00040000
     IDYES = 6
     IDNO = 7
     IDOK = 1
 
     def _win_message_box(title, text, buttons="yesno", icon="info"):
-        icon_map = {"info": MB_ICONINFORMATION, "question": MB_ICONQUESTION, "error": MB_ICONERROR}
+        icon_map = {
+            "info": MB_ICONINFORMATION,
+            "question": MB_ICONQUESTION,
+            "error": MB_ICONERROR
+        }
+
         flags = icon_map.get(icon, MB_ICONINFORMATION)
+        flags |= MB_TOPMOST
+
         if buttons == "yesno":
             flags |= MB_YESNO
         else:
             flags |= MB_OK
+
         return ctypes.windll.user32.MessageBoxW(0, text, title, flags)
 
 
@@ -57,7 +65,6 @@ class BaslerCamera:
         self.camera = pylon.InstantCamera()
         self.model_name = info.GetModelName()
         self.device_info = info
-        self._msg_opener = None
 
         # Default directory for parameter config files
         if platform.system() == 'Windows':
@@ -304,7 +311,6 @@ class BaslerCamera:
         if os.path.exists(config_path):
             return
         else:
-            self._msg_opener = DefaultConfigMsg()
             msg = QtWidgets.QMessageBox()
             msg.setIcon(QtWidgets.QMessageBox.Question)
             msg.setWindowTitle("Missing Config File")
@@ -397,18 +403,6 @@ class BaslerCamera:
 
     def safe_exec_messagebox(self, msgbox: QtWidgets.QMessageBox, buttons: str = "yesno") -> int:
         result_container = {}
-        finished_event = threading.Event()
-
-        def show_dialog():
-            try:
-                result_container["choice"] = int(msgbox.exec_())
-            except Exception:
-                result_container["choice"] = int(QtWidgets.QMessageBox.No)
-            finally:
-                finished_event.set()
-
-        if self._msg_opener is None:
-            self._msg_opener = DefaultConfigMsg()
 
         # Non-GUI thread (Windows only safe path)
         if sys.platform.startswith("win"):
@@ -436,29 +430,12 @@ class BaslerCamera:
 
             except Exception:
                 return int(QtWidgets.QMessageBox.No)
+        # Linux path (just create new config; no pop-up window)
         else:
-            QtCore.QMetaObject.invokeMethod(
-                self._msg_opener,
-                "run_box",
-                QtCore.Qt.ConnectionType.AutoConnection,
-                QtCore.Q_ARG(object, show_dialog)
-            )
-
-            if QtCore.QThread.currentThread() != QtWidgets.QApplication.instance().thread():
-                finished_event.wait()
-                QtCore.QTimer.singleShot(0, QtWidgets.QApplication.processEvents)
-            else:
-                while not finished_event.is_set():
-                    QtWidgets.QApplication.processEvents(QtCore.QEventLoop.AllEvents, 50)
-
-            return result_container.get("choice", int(QtWidgets.QMessageBox.No))
-    
-class DefaultConfigMsg(QtCore.QObject):
-    def __init__(self):
-        super().__init__()
-    @QtCore.Slot(object)
-    def run_box(self, fn):
-        fn()
+            try:
+                return result_container.get("choice", int(QtWidgets.QMessageBox.Yes))
+            except Exception:               
+                return result_container.get("choice", int(QtWidgets.QMessageBox.No))
 
 class ConfigurationHandler(pylon.ConfigurationEventHandler):
     """Handle the configuration events."""
