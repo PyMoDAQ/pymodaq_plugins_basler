@@ -12,13 +12,16 @@ package-url = 'https://github.com/PyMoDAQ/pymodaq_plugins_basler'
 name = "pymodaq_plugins_basler"
 description = 'PyMoDAQ plugins for cameras of Basler'
 dependencies = [
-    'pymodaq>=4.4.7',
+    "pymodaq>=5.3.2",
+    "pymodaq_utils>=5.3.1",
+    "pymodaq_gui>=5.3.0",
+    "pymodaq_data>=5.3.0",
     'numpy',  # for Basler camera
     'pypylon',
     'imageio',
     'uuid6',
     'pywin32; sys_platform == "win32"',
-    'h5py'
+    'h5py',
 ]
 
 authors = [
